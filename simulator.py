@@ -94,9 +94,7 @@ class Tensor:
             raise NotImplementedError("Partial indexing assignment not supported")
         self.data[off] = value
 
-    # Backward-compat helper (deprecated): use item assignment instead
-    def setv(self, newValue):
-        self.__setitem__(0, newValue)
+    # No setv anymore; use item assignment
         
     def __repr__(self):
         if self.sz == []:

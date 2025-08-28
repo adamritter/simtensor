@@ -11,7 +11,7 @@ import simulator
 
 
 def muladdsimple(a, b, c):
-    c.setv(a.value * b.value + c.value)
+    c[0] = a.value * b.value + c.value
 
 
 class TestTensorBasics(unittest.TestCase):
@@ -19,7 +19,7 @@ class TestTensorBasics(unittest.TestCase):
         t = simulator.Tensor([2], 0, [])
         self.assertEqual(t.size(), 1)
         self.assertEqual(t.sum(), 2)
-        t.setv(5)
+        t[0] = 5
         self.assertEqual(t.sum(), 5)
 
     def test_matrix_size_sum_and_indexing(self):
@@ -109,7 +109,7 @@ class TestCacheAndBandwidth(unittest.TestCase):
             # Just touch a few elements via nested indexing
             _ = aa[0][0].value
             _ = bb[0][0].value
-            cc[0][0].setv(0)
+            cc[0][0] = 0
 
         # ok path
         self.L0.run(matmulsimple_local, a0, b0, c0)
