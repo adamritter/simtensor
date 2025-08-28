@@ -23,6 +23,31 @@ Some example tasks are:
 
 The interesting part of these algorithms is not that they have 100% utilization, but that they find the optimal execution with shapes that are not the easiest ones, and keep track of the constraints that are necessary
 for optimal execution.
+Design Overview
+===============
+
+Components
+- Tensor: n-D views over flat storage with simple strides and slicing.
+- Cache: capacity and residency for a memory level; verifies data locality when running ops.
+- Bandwidth: link between a parent cache (higher level) and a child cache (lower level), tracking input/output words and transfer time.
+- BinOpx: a simple compute endpoint. Each call to `run` increments a configurable `time` cost.
+
+Hierarchy
+- Typical setup chains multiple caches via Bandwidth to a compute node:
+
+  L1 Cache  --[ Bandwidth ]-->  L0 Cache  --( BinOpx compute )
+
+Data Flow
+- load(view): copies a Tensor view down one level (parent -> child), increasing `Bandwidth.input` and child `used` capacity.
+- run(op, ...): executes compute at the cache level where tensors are resident, increasing `BinOpx.time`.
+- store(view): moves a view up one level (child -> parent), increasing `Bandwidth.output` and allocating in the parent.
+- store_to(src, dst): like `store` but writes into an existing parent view `dst` (no new parent allocation).
+
+Timing & Utilization
+- Compute: accumulated in `BinOpx.time`.
+- Bandwidth: accumulated per link in `Bandwidth.time` using either a shared-line or separate-line model.
+- Utilization: `cpu_time / max(cpu_time, max_bandwidth_time)` along the chain.
+
 Utilization & Counters
 ======================
 
