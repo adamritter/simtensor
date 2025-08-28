@@ -63,3 +63,50 @@ Bandwidth timing model:
 
 - Shared line (default): `time = (input + output) * input_clocks_per_word`
 - Separate lines: `time = max(input * input_clocks_per_word, output * output_clocks_per_word)`
+
+API Reference
+=============
+
+Tensor
+------
+- data: underlying Python list buffer (flat storage)
+- level: integer cache level of the tensor
+- sz: shape list (e.g., `[rows, cols]`, `[]` for scalar)
+- offset/skips: view offset and per-dimension strides in elements
+- size(): total element count of the view
+- sum(): recursive sum across the view
+- `t[i][j]`/slices: returns a Tensor view with adjusted offset/strides
+- assignment: `t[i][j] = value` writes to underlying buffer
+
+BinOpx
+------
+- ctor: `BinOpx(as0, alevel, bs, blevel, cs, clevel, f, t=0)`
+- run(a, b, c): asserts levels, calls `f(a,b,c)`, increments `time` by `t`
+- time: accumulated compute time units
+
+Cache
+-----
+- ctor: `Cache(size, parent)` where `parent` is `Bandwidth` or `BinOpx`
+- level/used/size: tracking for this cache
+- alloc(t): mark tensor's storage as resident in this cache (capacity check)
+- free(t): release tensor storage from this cache
+- calloc(n, m): allocate zero matrix `[n, m]` in this cache
+- alloc_diag(n): allocate identity matrix `[n, n]` in this cache
+- load(m): move a view one level down; increments `Bandwidth.input`
+- store(m): move a view one level up; increments `Bandwidth.output` and allocs in parent cache
+- store_to(src, dst): copy from child view `src` into existing parent view `dst`; updates bandwidth and frees child view, no new parent alloc
+- run(op, *args): run an op against tensors resident in this cache
+
+Bandwidth
+---------
+- ctor: `Bandwidth(cache, input_clocks_per_word=1, output_clocks_per_word=None)`
+- input/output: total words moved down/up through this link
+- time: aggregate transfer time
+  - shared line: `(input + output) * input_clocks_per_word`
+  - separate lines: `max(input * input_clocks_per_word, output * output_clocks_per_word)`
+- load(t)/store(t): update counters/time and forward to `cache`
+
+Top-level Functions
+-------------------
+- utilization(cache): `cpu_time / max(cpu_time, max_bandwidth_time)` across the chain
+- reset_counters(cache): zero all bandwidth counters and the compute node time

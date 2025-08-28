@@ -1,3 +1,16 @@
+"""Core simulation primitives for simtensor.
+
+Classes:
+- Tensor: n-D view over a flat Python list with simple slicing/indexing.
+- BinOpx: binary operation wrapper that tracks compute time.
+- Cache: capacity accounting and residency tracking for tensor storage.
+- Bandwidth: link between caches with input/output counters and transfer time.
+
+Top-level helpers:
+- utilization(cache): CPU utilization relative to bandwidth limits.
+- reset_counters(cache): Reset bandwidth and compute timers.
+"""
+
 import copy
 
 # Simulates the time to run the operations:
@@ -9,6 +22,15 @@ import copy
 # - Separate hardware from algorithm
 
 class Tensor:
+    """Lightweight n-D tensor view over a flat buffer.
+
+    Attributes
+    - data: underlying Python list (flat storage)
+    - level: integer cache level where the data currently resides
+    - sz: list[int] shape; empty list denotes a scalar
+    - offset: starting index into `data`
+    - skips: per-dimension strides (elements) for the view
+    """
     def __init__(self, data, level, sz, offset=0, skips=None):
         self.data = data
         self.level = level
@@ -25,12 +47,14 @@ class Tensor:
             self.value = self.data[self.offset]
 
     def size(self):
+        """Return the total element count of the view."""
         r = 1
         for i in self.sz:
             r*=i
         return r
 
     def sum(self):
+        """Return the sum of elements in the view (recursive)."""
         if self.sz == []:
             return self.data[self.offset]
         r=0
@@ -39,6 +63,10 @@ class Tensor:
         return r
 
     def __getitem__(self, key):
+        """Return a Tensor view using basic int/slice indexing.
+
+        Supports 1- or 2-D slicing via `t[i]`, `t[i:j]`, `t[:, k]`, etc.
+        """
         key2=None
         if isinstance(key, tuple):
             key, key2 = key
@@ -71,6 +99,7 @@ class Tensor:
         return r
 
     def __setitem__(self, key, value):
+        """Assign a scalar value via integer indexing into the view."""
         # Scalar assignment: accept any key (e.g., (), 0, slice(None))
         if self.sz == []:
             self.value = value
@@ -110,6 +139,11 @@ class Tensor:
 
 
 class BinOpx:
+    """Binary operation wrapper with timing.
+
+    Run enforces operand cache levels, calls the provided function `f(a,b,c)`,
+    and accumulates `time` by `t` per invocation.
+    """
     def __init__(self, as0, alevel, bs, blevel, cs, clevel, f, t=0):
         self.as0 = as0
         self.alevel = alevel
@@ -122,6 +156,7 @@ class BinOpx:
         self.time = 0
 
     def run(self, a, b, c):
+      """Execute the op and accumulate time; returns `c.data`."""
       assert a.level == self.alevel
       assert b.level == self.blevel
       assert c.level == self.clevel
@@ -134,6 +169,11 @@ class BinOpx:
 
 
 class Cache:
+    """A cache level with capacity and residency accounting.
+
+    Parent can be a `Bandwidth` (for multi-level hierarchies) or a `BinOpx`
+    (the compute endpoint). The `datas` set tracks resident storage ids.
+    """
     def __init__(self, size, parent):
         self.size = size
         self.used = 0
@@ -146,6 +186,7 @@ class Cache:
             self.level = self.parentcache.level + 1
 
     def alloc(self, tensor):
+        """Mark tensor storage as resident; raises if capacity exceeded."""
         if id(tensor.data) in self.datas:
             return
         self.used += tensor.size()
@@ -155,21 +196,25 @@ class Cache:
         return tensor
 
     def free(self, tensor):
+        """Release tensor storage from this cache."""
         self.datas.remove(id(tensor.data))
         self.used -= tensor.size()
 
     def run(self, op, *args):
+        """Run an op with tensors that must be resident at this level."""
         for arg in args:
             if type(arg) == Tensor and id(arg.data) not in self.datas:
                 raise Exception("Data not found in cache: ", arg.data, " for tensor ", arg)
         return op(self.parent, *args)
 
     def load(self, m):
+        """Move a view one level down; updates bandwidth input and residency."""
         if id(m.data) not in self.datas:
             raise Exception("Data not found in cache during load: ", m.data, " for tensor ", m)
         return self.parent.load(m)
 
     def store(self, m):
+        """Move a view one level up; updates bandwidth output and parent alloc."""
         m2 = self.parent.store(m)
         if m2.level != self.level:
             raise Exception("Tensor levels don't match")
@@ -250,6 +295,18 @@ class Cache:
         return f"<Cache level {self.level}, used: {self.used}, size: {self.size}, parent: {self.parent}>"
 
 class Bandwidth:
+    """Bandwidth link between caches with simple timing model.
+
+    Args
+    - cache: downstream cache level
+    - input_clocks_per_word: clocks to transfer one input word
+    - output_clocks_per_word: clocks to transfer one output word; if None, a
+      shared line is assumed and time scales with total words moved.
+
+    Time model
+    - Shared line: time = (input + output) * input_clocks_per_word
+    - Separate lines: time = max(input * input_cpw, output * output_cpw)
+    """
     def __init__(self, cache, input_clocks_per_word=1, output_clocks_per_word=None):
         self.input = 0
         self.output = 0
