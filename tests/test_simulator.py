@@ -139,6 +139,32 @@ class TestCacheAndBandwidth(unittest.TestCase):
         u = simulator.utilization(L1)
         self.assertAlmostEqual(u, 0.5)
 
+    def test_reset_counters(self):
+        # Build hierarchy
+        op = simulator.BinOpx([], 0, [], 0, [], 0, muladdsimple, t=1)
+        L0 = simulator.Cache(8, op)
+        bw = simulator.Bandwidth(L0)
+        L1 = simulator.Cache(64, bw)
+
+        # Move some data and do some compute
+        t = L1.calloc(2, 2)
+        v = L1.load(t)
+        L1.store(v)
+        a = simulator.Tensor([1], 0, [])
+        b = simulator.Tensor([1], 0, [])
+        c = simulator.Tensor([1], 0, [])
+        L0.alloc(a); L0.alloc(b); L0.alloc(c)
+        op.run(a, b, c)
+
+        self.assertGreater(bw.input + bw.output + bw.time + op.time, 0)
+
+        # Reset and verify zeros
+        simulator.reset_counters(L1)
+        self.assertEqual(bw.input, 0)
+        self.assertEqual(bw.output, 0)
+        self.assertEqual(bw.time, 0)
+        self.assertEqual(op.time, 0)
+
     def test_run_requires_resident_data(self):
         # op should be called via L0 cache, but only if tensors are resident in L0
         a = self.L1.alloc_diag(2)

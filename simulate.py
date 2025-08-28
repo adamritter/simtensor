@@ -66,6 +66,7 @@ if __name__ == "__main__":
     matmul_short_long_short_cache(cache2, a, b, c)
     print(cache2)
     print(c.sum())
+    print("utilization:", simulator.utilization(cache2))
 
     muladd_local = simulator.BinOpx([], 0, [], 0, [], 0, muladdsimple, 1)
     cache2 = simulator.Cache(10000, simulator.Bandwidth(simulator.Cache(24, muladd_local)))
@@ -75,6 +76,7 @@ if __name__ == "__main__":
 
     matmul_short_long_short_cache(cache2, a, b, c)
     print(cache2)
+    print("utilization:", simulator.utilization(cache2))
 
     muladd_local = simulator.BinOpx([], 0, [], 0, [], 0, muladdsimple, 1)
     cache2 = simulator.Cache(10000, simulator.Bandwidth(simulator.Cache(24, muladd_local)))
@@ -84,3 +86,4 @@ if __name__ == "__main__":
 
     matmul(cache2, a, b, c)
     print(cache2)
+    print("utilization:", simulator.utilization(cache2))

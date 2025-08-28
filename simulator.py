@@ -317,3 +317,22 @@ def utilization(cache):
     if denom == 0:
         return 0.0
     return cpu_time / denom
+
+
+def reset_counters(cache):
+    """
+    Reset timing/throughput counters along the hierarchy rooted at `cache`.
+
+    - Sets each Bandwidth's input/output/time to 0
+    - Sets the compute node's (BinOpx) time to 0
+    """
+    c = cache
+    while isinstance(c.parent, Bandwidth):
+        bw = c.parent
+        bw.input = 0
+        bw.output = 0
+        bw.time = 0
+        c = bw.cache
+    # Reset compute node time if present
+    if hasattr(c, 'parent') and hasattr(c.parent, 'time'):
+        c.parent.time = 0
