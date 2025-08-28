@@ -291,3 +291,29 @@ class Bandwidth:
         return (
             f"<Bandwidth input: {self.input}, output: {self.output}, time: {self.time}, parent: {self.cache}>"
         )
+
+
+def utilization(cache):
+    """
+    Compute utilization for a cache hierarchy rooted at `cache`.
+
+    Utilization = cpu_time / max(cpu_time, max_bandwidth_time)
+
+    Walks down through parent Bandwidth links to the compute node (BinOpx),
+    collecting each Bandwidth's aggregate `time` and the BinOpx `time`.
+    """
+    # Accumulate the maximum bandwidth time along the chain
+    max_bw_time = 0
+    c = cache
+    while isinstance(c.parent, Bandwidth):
+        bw = c.parent
+        if bw.time > max_bw_time:
+            max_bw_time = bw.time
+        c = bw.cache
+
+    # The compute node is expected to be the parent of the lowest cache
+    cpu_time = getattr(c.parent, 'time', 0)
+    denom = max(cpu_time, max_bw_time)
+    if denom == 0:
+        return 0.0
+    return cpu_time / denom

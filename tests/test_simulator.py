@@ -113,6 +113,32 @@ class TestCacheAndBandwidth(unittest.TestCase):
         # time = max(4*2, 4*3) = 12
         self.assertEqual(bw.time, 12)
 
+    def test_utilization(self):
+        # Build a small hierarchy with separate-line bandwidth
+        op = simulator.BinOpx([], 0, [], 0, [], 0, muladdsimple, t=1)
+        L0 = simulator.Cache(8, op)
+        bw = simulator.Bandwidth(L0, input_clocks_per_word=2, output_clocks_per_word=4)
+        L1 = simulator.Cache(64, bw)
+
+        # Move 3 words down and back up -> bw.time = max(3*2, 3*4) = 12
+        full = L1.calloc(3, 1)  # 3 words
+        vL0 = L1.load(full[:])
+        L1.store(vL0)
+        self.assertEqual(bw.time, 12)
+
+        # Do 6 units of compute time at the bottom
+        a = simulator.Tensor([1], 0, [])
+        b = simulator.Tensor([2], 0, [])
+        c = simulator.Tensor([3], 0, [])
+        L0.alloc(a); L0.alloc(b); L0.alloc(c)
+        for _ in range(6):
+            op.run(a, b, c)
+        self.assertEqual(op.time, 6)
+
+        # Utilization = cpu / max(cpu, bw) = 6 / max(6, 12) = 0.5
+        u = simulator.utilization(L1)
+        self.assertAlmostEqual(u, 0.5)
+
     def test_run_requires_resident_data(self):
         # op should be called via L0 cache, but only if tensors are resident in L0
         a = self.L1.alloc_diag(2)
