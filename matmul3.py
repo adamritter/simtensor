@@ -37,47 +37,39 @@ def matmul3_two(cache2, a, b, c, out):
 
 
 def matmul3_fused(cache2, a, b, c, out, tile=4):
-    """Fused triple product producing out = (a @ b) @ c without materializing a@b.
+    """Fused triple product: out = (a @ b) @ c, avoiding full (a @ b).
 
-    For each output tile, accumulates contributions from the inner dimensions by
-    streaming columns of `a` and rows of `c`, scaled by scalars from `b`.
+    Reuses `simulate.matmul_short_long_short_cache` for the A @ (B[:, l]) step,
+    then applies an outer product with C[l, :] per l-tile to accumulate into out.
     """
     N, M = a.sz[0], a.sz[1]
+    assert M == b.sz[0]
     P = b.sz[1]
+    assert P == c.sz[0]
     R = c.sz[1]
+    assert out.sz == [N, R]
 
     i0 = 0
     while i0 < N:
+        ii = min(tile, N - i0)
         k0 = 0
         while k0 < R:
+            kk = min(tile, R - k0)
             # Work on a small output tile
-            out_tile_view = out[i0:i0 + tile, k0:k0 + tile]
+            out_tile_view = out[i0:i0 + ii, k0:k0 + kk]
             out_tile = cache2.load(out_tile_view)
 
-            # Accumulate over inner dims
-            for j in range(M):
-                # Load a column block from a
-                a_col = cache2.load(a[i0:i0 + tile, j:(j + 1)])  # (tile x 1)
+            # Accumulate contributions across P
+            for l in range(P):
+                # tmp = a_block @ b_column(l), kept in L0
+                tmp = cache2.parentcache.calloc(ii, 1)
+                simulate.matmul_short_long_short_cache(cache2, a[i0:i0 + ii, :], b[:, l:(l + 1)], tmp)
 
-                for l in range(P):
-                    # Load scalar from b and row block from c
-                    b_scalar = cache2.load(b[j:(j + 1), l:(l + 1)])  # (1 x 1)
-                    c_row = cache2.load(c[l:(l + 1), k0:k0 + tile])  # (1 x tile)
-
-                    # Scale the row by b_scalar into a temporary row in L0
-                    scaled_row = cache2.parentcache.calloc(1, c_row.sz[1])
-                    for kk in range(c_row.sz[1]):
-                        simulate.muladd.run(b_scalar, c_row[0][kk], scaled_row[0][kk])
-
-                    # Outer product add into the output tile: a_col @ scaled_row
-                    cache2.parentcache.run(simulate.matmulsimple, a_col, scaled_row, out_tile)
-
-                    # Free temporaries in L0
-                    cache2.parentcache.free(b_scalar)
-                    cache2.parentcache.free(c_row)
-                    cache2.parentcache.free(scaled_row)
-
-                cache2.parentcache.free(a_col)
+                # Multiply tmp (ii x 1) by c_row (1 x kk) into out_tile
+                c_row = cache2.load(c[l:(l + 1), k0:k0 + kk])
+                cache2.parentcache.run(simulate.matmulsimple, tmp, c_row, out_tile)
+                cache2.parentcache.free(tmp)
+                cache2.parentcache.free(c_row)
 
             # Store the tile back to the parent cache
             cache2.store_to(out_tile, out_tile_view)
@@ -107,7 +99,17 @@ def _run_example(n, m, p, r, title):
     OUT = cache_two.calloc(n, r)
     matmul3_two(cache_two, A, B, C, OUT)
     bw_two = cache_two.parent
-    print(f"two-matmul: input={bw_two.input} output={bw_two.output} total={bw_two.input + bw_two.output}")
+    op_two = bw_two.cache.parent  # BinOpx at the bottom
+    util_two = simulator.utilization(cache_two)
+    print(
+        "two-matmul: input={inp} output={out} total={tot} cpu={cpu} util={util:.3f}".format(
+            inp=bw_two.input,
+            out=bw_two.output,
+            tot=bw_two.input + bw_two.output,
+            cpu=op_two.time,
+            util=util_two,
+        )
+    )
 
     # Fused implementation
     cache_fused = _new_cache()
@@ -117,7 +119,17 @@ def _run_example(n, m, p, r, title):
     OUT2 = cache_fused.calloc(n, r)
     matmul3_fused(cache_fused, A2, B2, C2, OUT2)
     bw_fused = cache_fused.parent
-    print(f"fused:      input={bw_fused.input} output={bw_fused.output} total={bw_fused.input + bw_fused.output}")
+    op_fused = bw_fused.cache.parent
+    util_fused = simulator.utilization(cache_fused)
+    print(
+        "fused:      input={inp} output={out} total={tot} cpu={cpu} util={util:.3f}".format(
+            inp=bw_fused.input,
+            out=bw_fused.output,
+            tot=bw_fused.input + bw_fused.output,
+            cpu=op_fused.time,
+            util=util_fused,
+        )
+    )
 
     if (bw_fused.input + bw_fused.output) < (bw_two.input + bw_two.output):
         print("-> fused uses less bandwidth")
