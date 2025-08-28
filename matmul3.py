@@ -14,14 +14,14 @@ def matmul_store(cache2, a, b, c, tile=4):
             # Load output tile into L0
             c_tile_view = c[i:i + n, j:j + n]
             cc = cache2.load(c_tile_view)
-            # Load input tiles into L0
-            aa = cache2.load(a[i:(i + n), :])
-            bb = cache2.load(b[:, j:(j + n)])
-            # Compute tile at L0 using simple matmul
-            cache2.parentcache.run(simulate.matmulsimple, aa, bb, cc)
-            # Free inputs from L0
-            cache2.parentcache.free(aa)
-            cache2.parentcache.free(bb)
+            # Short-long-short across the shared dimension to keep L0 usage small
+            shared = a.sz[1]
+            for t in range(shared):
+                aa_col = cache2.load(a[i:(i + n), t:(t + 1)])  # (n x 1)
+                bb_row = cache2.load(b[t:(t + 1), j:(j + n)])  # (1 x n)
+                cache2.parentcache.run(simulate.matmulsimple, aa_col, bb_row, cc)
+                cache2.parentcache.free(aa_col)
+                cache2.parentcache.free(bb_row)
             # Store the tile back to parent view
             cache2.store_to(cc, c_tile_view)
             j += n
@@ -31,8 +31,8 @@ def matmul_store(cache2, a, b, c, tile=4):
 def matmul3_two(cache2, a, b, c, out):
     """Compute (a @ b) @ c using two matmul calls with an explicit temporary."""
     tmp = cache2.calloc(a.sz[0], b.sz[1])
-    matmul_store(cache2, a, b, tmp)
-    matmul_store(cache2, tmp, c, out)
+    simulate.matmul(cache2, a, b, tmp)
+    simulate.matmul(cache2, tmp, c, out)
     return out
 
 

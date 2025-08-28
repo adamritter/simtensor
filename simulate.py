@@ -34,10 +34,18 @@ def matmul(cache2, a, b, c):
     while i < c.sz[0]:
         j = 0
         while j < c.sz[1]:
+            # Determine edge-aware tile sizes
+            th = n if i + n <= c.sz[0] else (c.sz[0] - i)
+            tw = n if j + n <= c.sz[1] else (c.sz[1] - j)
             # Load parent tile to child cache, compute into it, then store back
-            cc = cache2.load(c[i:i + n, j:j + n])
-            matmul_short_long_short_cache(cache2, a[i:(i + n), :], b[:, j:(j + n)], cc)
-            cache2.store_to(cc, c[i:i + n, j:j + n])
+            cc = cache2.load(c[i:i + th, j:j + tw])
+            matmul_short_long_short_cache(
+                cache2,
+                a[i:(i + th), :],
+                b[:, j:(j + tw)],
+                cc,
+            )
+            cache2.store_to(cc, c[i:i + th, j:j + tw])
             j += n
         i += n
 
