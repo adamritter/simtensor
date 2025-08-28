@@ -119,6 +119,41 @@ class TestCacheAndBandwidth(unittest.TestCase):
         with self.assertRaises(Exception):
             self.L0.run(matmulsimple_local, a0, b0, c0)
 
+    def test_store_to_copies_into_existing_parent_view(self):
+        # Prepare parent (L1) destination buffer and a child (L0) source view
+        # Destination: a zero matrix at L1; take a column view as target
+        dest_full = self.L1.calloc(4, 4)
+        dest_col = dest_full[:, 1:2]  # shape (4,1)
+
+        # Source: identity at L1, load a column view to L0
+        src_full = self.L1.alloc_diag(4)
+        src_col_L1 = src_full[:, 2:3]
+        # Load down to L0
+        src_col_L0 = self.L1.load(src_col_L1)
+
+        # Check initial accounting
+        used_L0_before = self.L0.used
+        used_L1_before = self.L1.used
+        out_before = self.bw.output
+
+        # Perform store_to from L0 -> L1 into existing dest view
+        self.L1.store_to(src_col_L0, dest_col)
+
+        # Bandwidth output increased by number of elements moved
+        self.assertEqual(self.bw.output, out_before + src_col_L0.size())
+
+        # Child cache freed the source
+        self.assertEqual(self.L0.used, used_L0_before - src_col_L0.size())
+
+        # Parent cache did not allocate new memory; usage unchanged
+        self.assertEqual(self.L1.used, used_L1_before)
+
+        # Data copied: dest column should match an identity column at index 2
+        # Identity at column 2 has a single 1 at row 2
+        # Verify via direct data reads respecting strides
+        ones = [dest_full[i][1].value for i in range(4)]
+        self.assertEqual(ones, [0, 0, 1, 0])
+
 
 if __name__ == "__main__":
     unittest.main()

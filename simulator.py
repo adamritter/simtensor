@@ -70,10 +70,33 @@ class Tensor:
             r = Tensor(r.data, r.level, [r.sz[0]]+r.sz[2:], offset, [r.skips[0]]+ r.skips[2:])
         return r
 
+    def __setitem__(self, key, value):
+        # Scalar assignment: accept any key (e.g., (), 0, slice(None))
+        if self.sz == []:
+            self.value = value
+            self.data[self.offset] = value
+            return
+        # Normalize key to tuple for multidimensional indexing
+        if not isinstance(key, tuple):
+            key = (key,)
+        if len(key) == 0:
+            raise IndexError("Empty index not supported")
+        # Only support integer indexing assignment to a single element
+        off = self.offset
+        for i, idx in enumerate(key):
+            if not isinstance(idx, int):
+                raise NotImplementedError("Slice or advanced assignment not supported")
+            if idx < 0:
+                idx += self.sz[i]
+            off += self.skips[i] * idx
+        # Ensure fully indexed to a scalar element
+        if len(key) != len(self.sz):
+            raise NotImplementedError("Partial indexing assignment not supported")
+        self.data[off] = value
+
+    # Backward-compat helper (deprecated): use item assignment instead
     def setv(self, newValue):
-        assert self.sz == []
-        self.value = newValue
-        self.data[self.offset] = newValue
+        self.__setitem__(0, newValue)
         
     def __repr__(self):
         if self.sz == []:
@@ -153,6 +176,63 @@ class Cache:
         if m2.level != self.level:
             raise Exception("Tensor levels don't match")
         self.alloc(m2)
+    
+    def store_to(self, src, dst):
+        """
+        Store data from a one-level-lower tensor `src` into an existing
+        destination view `dst` that already resides in this cache.
+
+        Semantics mirror `store` for accounting:
+        - Increments parent bandwidth output by the number of elements copied.
+        - Frees the source tensor from the child cache (capacity decreases there).
+        - Does NOT allocate new memory in this cache (writes into existing `dst`).
+
+        Requirements:
+        - `src.level == self.level - 1`
+        - `dst.level == self.level`
+        - `id(src.data)` is resident in the child cache
+        - `id(dst.data)` is resident in this cache
+        - `src.size() == dst.size()` (same number of elements)
+        """
+        # Validate cache relationship
+        if not isinstance(self.parent, Bandwidth) or self.parentcache is None:
+            raise Exception("store_to requires a parent Bandwidth and child Cache")
+
+        # Validate levels
+        if src.level != self.level - 1:
+            raise Exception("Source tensor must be exactly one level below destination cache")
+        if dst.level != self.level:
+            raise Exception("Destination tensor level must match this cache level")
+
+        # Validate residency
+        if id(src.data) not in self.parentcache.datas:
+            raise Exception("Source data not found in child cache during store_to")
+        if id(dst.data) not in self.datas:
+            raise Exception("Destination data not found in this cache during store_to")
+
+        # Accounting like `store`: this bumps bandwidth.output and frees from child.
+        self.parent.store(src)  # src.level becomes self.level; child capacity updated
+
+        # Size compatibility
+        if src.size() != dst.size():
+            raise Exception("Source and destination sizes must match for store_to")
+
+        # Copy element-wise from src view into dst view using offsets and strides.
+        # Works for arbitrary dimensionality described by sz and skips.
+        sz = src.sz
+        if len(sz) != len(dst.sz):
+            raise Exception("Source and destination ranks must match for store_to")
+
+        def rec(dim, off_s, off_d):
+            if dim == len(sz):
+                dst.data[off_d] = src.data[off_s]
+                return
+            step_s = src.skips[dim]
+            step_d = dst.skips[dim]
+            for i in range(sz[dim]):
+                rec(dim + 1, off_s + i * step_s, off_d + i * step_d)
+
+        rec(0, src.offset, dst.offset)
 
     def alloc_diag(self, n):
         data = []

@@ -1,8 +1,9 @@
+#!/usr/bin/env python3
 import simulator
 
 
 def muladdsimple(a, b, c):
-    c.setv(a.value * b.value + c.value)
+    c[0] = a.value * b.value + c.value
 
 
 # Basic multiply-add operation used by matmul
@@ -82,4 +83,3 @@ if __name__ == "__main__":
 
     matmul(cache2, a, b, c)
     print(cache2)
-
