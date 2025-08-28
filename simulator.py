@@ -250,26 +250,44 @@ class Cache:
         return f"<Cache level {self.level}, used: {self.used}, size: {self.size}, parent: {self.parent}>"
 
 class Bandwidth:
-    def __init__(self, cache):
+    def __init__(self, cache, input_clocks_per_word=1, output_clocks_per_word=None):
         self.input = 0
         self.output = 0
         self.cache = cache
+        self.input_clocks_per_word = input_clocks_per_word
+        self.output_clocks_per_word = output_clocks_per_word
+        self.time = 0  # aggregate transfer time in 'clocks'
+
+    def _update_time(self):
+        if self.output_clocks_per_word is None:
+            # Shared line: time scales with total words moved
+            self.time = (self.input + self.output) * self.input_clocks_per_word
+        else:
+            # Separate lines: overlap, take the slower side
+            tin = self.input * self.input_clocks_per_word
+            tout = self.output * self.output_clocks_per_word
+            self.time = max(tin, tout)
+        return self.time
 
     def load(self, tensor):
-        tensor=copy.deepcopy(tensor)
+        tensor = copy.deepcopy(tensor)
         self.input += tensor.size()
         self.cache.alloc(tensor)
         tensor.level -= 1
+        self._update_time()
         return tensor
 
     def store(self, tensor):
         self.output += tensor.size()
         self.cache.free(tensor)
         tensor.level += 1
+        self._update_time()
         return tensor
 
     def run(self, op, *args):
         return self.cache.run(op, *args)
 
     def __repr__(self):
-        return f"<Bandwidth input: {self.input}, output: {self.output}, parent: {self.cache}>"
+        return (
+            f"<Bandwidth input: {self.input}, output: {self.output}, time: {self.time}, parent: {self.cache}>"
+        )

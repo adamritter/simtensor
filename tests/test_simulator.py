@@ -81,6 +81,8 @@ class TestCacheAndBandwidth(unittest.TestCase):
         self.assertEqual(vL0.level, self.L0.level)  # moved one level down
         self.assertEqual(self.bw.input, 4)
         self.assertEqual(self.L0.used, 4)
+        # With default shared line (1 clock/word): time == input+output
+        self.assertEqual(self.bw.time, 4)
 
         # Store it back up: frees L0 and allocs in L1 (by current semantics)
         self.assertEqual(self.bw.output, 0)
@@ -89,6 +91,27 @@ class TestCacheAndBandwidth(unittest.TestCase):
         self.assertEqual(self.L0.used, 0)
         # L1 usage increases by 4 for the stored copy
         self.assertEqual(self.L1.used, a.size() + 4)
+        # time now reflects input+output words
+        self.assertEqual(self.bw.time, 8)
+
+    def test_bandwidth_separate_lines_time(self):
+        # Separate lines: choose max of input*time_in and output*time_out
+        L0 = simulator.Cache(32, self.op)
+        bw = simulator.Bandwidth(L0, input_clocks_per_word=2, output_clocks_per_word=3)
+        L1 = simulator.Cache(100, bw)
+
+        t = L1.calloc(2, 5)  # 10 words allocated at parent
+        # Load a 2x2 view => 4 words
+        v = L1.load(t[:, 0:2])
+        self.assertEqual(bw.input, 4)
+        # time = max(4*2, 0) = 8
+        self.assertEqual(bw.time, 8)
+
+        # Store the same 4 words back
+        L1.store(v)
+        self.assertEqual(bw.output, 4)
+        # time = max(4*2, 4*3) = 12
+        self.assertEqual(bw.time, 12)
 
     def test_run_requires_resident_data(self):
         # op should be called via L0 cache, but only if tensors are resident in L0
