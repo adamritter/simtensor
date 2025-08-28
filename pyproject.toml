@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simtensor"
+version = "0.1.0"
+description = "Simulator for optimal kernels with cache and bandwidth constraints."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["simulation", "tensor", "matrix", "performance", "kernels"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Homepage = "https://github.com/adamritter/simtensor"
+Repository = "https://github.com/adamritter/simtensor"
+
+[tool.setuptools]
+py-modules = ["simulator", "simulate", "simtensor"]
+
