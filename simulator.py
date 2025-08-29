@@ -396,16 +396,25 @@ class Cache:
 
 
 
-    def dynamic_times(self, params):
-        """Filter params by capacity and delegate to compute node dynamic_times.
+    def dynamic_times(self, nmatmuls, max_cpu):
+        """Delegate to parent dynamic_times and apply simple capacity filter.
 
-        Filters out shapes where a*b*d >= self.size (using ((a,b),(b,d)) format),
-        then calls the compute node (BinOpx) dynamic_times.
+        For the common two-matmul case (three dims a,b,c), we keep only entries
+        with a*b*c < self.size. Keys are expected in the form:
+          ((a,b), lvl, (b,c), lvl, (a,c), lvl)
         """
-        # capacity filter
-        params2 = [((a, b), (c, d)) for ((a, b), (c, d)) in params if a * b * d < self.size]
-        # find compute node: either parent is BinOpx or Bandwidth->Cache->BinOpx
-        return self.parent.dynamic_times(params2)
+        base = self.parent.dynamic_times(nmatmuls, max_cpu)
+        if nmatmuls != 2:
+            return base
+        out = {}
+        for key, v in base.items():
+            if len(key) < 4:
+                continue
+            a, b = key[0]
+            _, c = key[2]
+            if a * b + b * c + a * c < self.size:
+                out[key] = v
+        return out
 class Bandwidth:
     """Bandwidth link between caches with simple timing model.
 
@@ -462,7 +471,7 @@ class Bandwidth:
         )
 
 
-    def dynamic_times(self, params):
+    def dynamic_times(self, nmatmuls, max_cpu):
         """Augment compute dynamic_times with bandwidth-level variants and timing.
 
         First delegates to the downstream cache (or compute node) to obtain the
@@ -477,7 +486,7 @@ class Bandwidth:
         Returns a dict: key_variant -> [cpu_time, bw_time_for_this_link].
         """
         # Delegate to the child cache to get compute-time map
-        base = self.cache.dynamic_times(params)
+        base = self.cache.dynamic_times(nmatmuls, max_cpu)
 
         def shape_elems(shape):
             n = 1
