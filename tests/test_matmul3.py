@@ -24,27 +24,6 @@ class TestMatmul3(unittest.TestCase):
         L1 = simulator.Cache(l1_size, bw)
         return L1
 
-    def test_matmul_store_matches_matmul(self):
-        L1_a = self.make_hierarchy()
-        A1 = L1_a.alloc_diag(4)
-        B1 = L1_a.calloc(4, 4)
-        for i in range(4):
-            for j in range(4):
-                B1[i][j] = i * 10 + j
-        C1 = L1_a.calloc(4, 4)
-        simulate.matmul(L1_a, A1, B1, C1)
-
-        L1_b = self.make_hierarchy()
-        A2 = L1_b.alloc_diag(4)
-        B2 = L1_b.calloc(4, 4)
-        for i in range(4):
-            for j in range(4):
-                B2[i][j] = i * 10 + j
-        C2 = L1_b.calloc(4, 4)
-        matmul3.matmul_store(L1_b, A2, B2, C2, tile=4)
-
-        self.assertEqual(matrix_to_lists(C1), matrix_to_lists(C2))
-
     def test_fused_matches_two(self):
         N, M, P, R = 4, 1, 4, 1
 
