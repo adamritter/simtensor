@@ -53,34 +53,6 @@ class Tensor:
             r*=i
         return r
 
-    def enumerate_power_triples(self, base: int, limit: int):
-        """Enumerate all (a,b,c) that are powers of `base` with product p<=limit.
-
-        Finds the largest power p = base^k such that p <= limit, then enumerates
-        nonnegative exponent triples (e1, e2, e3) with e1+e2+e3 = k. Returns a
-        mapping mirroring the matmul key format used elsewhere:
-
-          ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
-
-        where a=base^e1, b=base^e2, c=base^e3.
-        """
-        if base < 2:
-            raise ValueError("base must be >= 2")
-        p = 1
-        exp = 0
-        while p * base <= limit:
-            p *= base
-            exp += 1
-        out = {}
-        pow_cache = [base ** e for e in range(exp + 1)]
-        for e1 in range(exp + 1):
-            for e2 in range(exp - e1 + 1):
-                e3 = exp - e1 - e2
-                a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
-                key = ((a, b), 0, (b, c), 0, (a, c), 0)
-                out[key] = [a * b * c]
-        return out
-
     def sum(self):
         """Return the sum of elements in the view (recursive)."""
         if self.sz == []:
@@ -89,34 +61,6 @@ class Tensor:
         for i in range(self.sz[0]):
             r+=self[i].sum()
         return r
-
-    def enumerate_power_triples(self, base: int, limit: int):
-        """Enumerate all (a,b,c) that are powers of `base` with product p<=limit.
-
-        Finds the largest power p = base^k such that p <= limit, then enumerates
-        nonnegative exponent triples (e1, e2, e3) with e1+e2+e3 = k. Returns a
-        mapping mirroring the matmul key format used elsewhere:
-
-          ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
-
-        where a=base^e1, b=base^e2, c=base^e3.
-        """
-        if base < 2:
-            raise ValueError("base must be >= 2")
-        p = 1
-        exp = 0
-        while p * base <= limit:
-            p *= base
-            exp += 1
-        out = {}
-        pow_cache = [base ** e for e in range(exp + 1)]
-        for e1 in range(exp + 1):
-            for e2 in range(exp - e1 + 1):
-                e3 = exp - e1 - e2
-                a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
-                key = ((a, b), 0, (b, c), 0, (a, c), 0)
-                out[key] = [a * b * c]
-        return out
 
     def __getitem__(self, key):
         """Return a Tensor view using basic int/slice indexing.
@@ -153,34 +97,6 @@ class Tensor:
             offset = r.offset + r.skips[1]*key2
             r = Tensor(r.data, r.level, [r.sz[0]]+r.sz[2:], offset, [r.skips[0]]+ r.skips[2:])
         return r
-
-    def enumerate_power_triples(self, base: int, limit: int):
-        """Enumerate all (a,b,c) that are powers of `base` with product p<=limit.
-
-        Finds the largest power p = base^k such that p <= limit, then enumerates
-        nonnegative exponent triples (e1, e2, e3) with e1+e2+e3 = k. Returns a
-        mapping mirroring the matmul key format used elsewhere:
-
-          ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
-
-        where a=base^e1, b=base^e2, c=base^e3.
-        """
-        if base < 2:
-            raise ValueError("base must be >= 2")
-        p = 1
-        exp = 0
-        while p * base <= limit:
-            p *= base
-            exp += 1
-        out = {}
-        pow_cache = [base ** e for e in range(exp + 1)]
-        for e1 in range(exp + 1):
-            for e2 in range(exp - e1 + 1):
-                e3 = exp - e1 - e2
-                a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
-                key = ((a, b), 0, (b, c), 0, (a, c), 0)
-                out[key] = [a * b * c]
-        return out
 
     def __setitem__(self, key, value):
         """Assign a scalar value via integer indexing into the view."""
@@ -336,32 +252,60 @@ class BinOpx:
             r[key] = [time]
         return r
 
-    def enumerate_power_triples(self, base: int, limit: int):
-        """Enumerate all (a,b,c) that are powers of `base` with product p<=limit.
 
-        Finds the largest power p = base^k such that p <= limit, then enumerates
-        nonnegative exponent triples (e1, e2, e3) with e1+e2+e3 = k. Returns a
-        mapping mirroring the matmul key format used elsewhere:
+    def enumerate_power_triples(self, base: int, limit: int):
+
+        """Enumerate all (a,b,c) powers of `base` with product <= largest power.
+
+
+        Let p = base^k be the largest power not exceeding `limit`. Enumerate all
+
+        nonnegative exponent triples (e1, e2, e3) such that e1+e2+e3 <= k. For
+
+        each triple, produce a mapping key mirroring the matmul format:
+
 
           ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
 
-        where a=base^e1, b=base^e2, c=base^e3.
+
+        where a=base^e1, b=base^e2, c=base^e3. This includes the trivial case
+
+        (1,1,1) and all smaller products, not only those that multiply to p.
+
         """
+
         if base < 2:
+
             raise ValueError("base must be >= 2")
+
         p = 1
+
         exp = 0
+
         while p * base <= limit:
+
             p *= base
+
             exp += 1
+
         out = {}
+
         pow_cache = [base ** e for e in range(exp + 1)]
+
         for e1 in range(exp + 1):
+
             for e2 in range(exp - e1 + 1):
-                e3 = exp - e1 - e2
-                a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
-                key = ((a, b), 0, (b, c), 0, (a, c), 0)
-                out[key] = [a * b * c]
+
+                max_e3 = exp - e1 - e2
+
+                for e3 in range(max_e3 + 1):
+
+                    a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
+
+                    key = ((a, b), 0, (b, c), 0, (a, c), 0)
+
+                    out[key] = [a * b * c]
+
         return out
 
 
@@ -509,7 +453,7 @@ class Cache:
                 continue
             a, b = key[0]
             _, c = key[2]
-            if a * b + b * c + a * c < self.size:
+            if a * b * c < self.size:
                 out[key] = v
         return out
 class Bandwidth:
