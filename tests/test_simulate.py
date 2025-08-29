@@ -37,6 +37,15 @@ class TestSimulateMatmul(unittest.TestCase):
         simulate.matmul(L1, A, B, C)
         self.assertEqual(matrix_to_lists(C), matrix_to_lists(B))
 
+    def test_matmul_cpu_operations(self):
+        L1, L0, bw, op = self.make_hierarchy()
+        n, m, k = 2, 3, 4
+        A = L1.calloc(n, m)
+        B = L1.calloc(m, k)
+        C = L1.calloc(n, k)
+        simulate.matmul(L1, A, B, C)
+        self.assertEqual(op.time, n * m * k)
+
     def test_matmul_edge_tiles_non_multiple_of_block(self):
         # This catches edge handling when dimensions are not multiples of 4
         L1, L0, bw, op = self.make_hierarchy(l0_size=2048, l1_size=20000)
