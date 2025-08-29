@@ -8,6 +8,24 @@ def matmul3_two(cache2, a, b, c, out):
     simulate.matmul(cache2, tmp, c, out)
     return out
 
+
+
+def matmul_right_sweep_cached_left(cache2, left_L0, right_L1, out_rows_view, tile=4):
+    """Tile across columns of right_L1/out_rows_view with left_L0 resident in L0."""
+    P = left_L0.sz[1]
+    R = out_rows_view.sz[1]
+    k0 = 0
+    while k0 < R:
+        kk = min(tile, R - k0)
+        out_tile_view = out_rows_view[:, k0:k0 + kk]
+        out_tile = cache2.load(out_tile_view)
+        for l in range(P):
+            tmp_col = left_L0[:, l:(l + 1)]
+            c_row = cache2.load(right_L1[l:(l + 1), k0:k0 + kk])
+            cache2.parentcache.run(simulate.matmulsimple, tmp_col, c_row, out_tile)
+            cache2.parentcache.free(c_row)
+        cache2.store_to(out_tile, out_tile_view)
+        k0 += tile
 def matmul3_fused_precompute(cache2, a, b, c, out, tile=4):
     """Fused triple product with reduced store traffic by precomputing A@B cols.
 
@@ -43,24 +61,8 @@ def matmul3_fused_precompute(cache2, a, b, c, out, tile=4):
             tmpbuf,
         )
 
-        # Now sweep output column tiles; keep each out tile resident and only
-        # store once after accumulating all l contributions.
-        k0 = 0
-        while k0 < R:
-            kk = min(tile, R - k0)
-            out_tile_view = out[i0:i0 + ii, k0:k0 + kk]
-            out_tile = cache2.load(out_tile_view)
-
-            # Multiply using outer products: tmpbuf is in L0, so load only C rows
-            for l in range(P):
-                tmp_col = tmpbuf[:, l:(l + 1)]
-                c_row = cache2.load(c[l:(l + 1), k0:k0 + kk])
-                cache2.parentcache.run(simulate.matmulsimple, tmp_col, c_row, out_tile)
-                cache2.parentcache.free(c_row)
-
-            # After full accumulation, write back the completed out tile once
-            cache2.store_to(out_tile, out_tile_view)
-            k0 += tile
+        # Sweep output columns with left operand cached in L0
+        matmul_right_sweep_cached_left(cache2, tmpbuf, c, out[i0:i0 + ii, :], tile=tile)
 
         # Free TMP buffer for this row tile
         cache2.parentcache.free(tmpbuf)
