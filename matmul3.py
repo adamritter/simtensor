@@ -26,7 +26,8 @@ def matmul_right_sweep_cached_left(cache2, left_L0, right_L1, out_rows_view, til
             cache2.parentcache.free(c_row)
         cache2.store_to(out_tile, out_tile_view)
         k0 += tile
-def matmul3_fused_precompute(cache2, a, b, c, out, tile=4):
+
+def matmul3_fused(cache2, a, b, c, out, tile=4):
     """Fused triple product with reduced store traffic by precomputing A@B cols.
 
     Strategy:
@@ -72,55 +73,6 @@ def matmul3_fused_precompute(cache2, a, b, c, out, tile=4):
     return out
 
 
-def matmul3_fused(cache2, a, b, c, out, tile=4):
-    """Fused triple product: out = (a @ b) @ c without forming the (a @ b) temp.
-
-    For each row-tile of A (size ii), we compute tmp = A_block @ B[:, l]
-    once per l, then sweep across the output column-tiles k0 and accumulate
-    tmp @ C[l, k0:k0+kk] into the corresponding out tiles. This avoids
-    recomputing tmp for each k0 (which previously over-counted compute).
-    """
-    N, M = a.sz[0], a.sz[1]
-    assert M == b.sz[0]
-    P = b.sz[1]
-    assert P == c.sz[0]
-    R = c.sz[1]
-    assert out.sz == [N, R]
-
-    i0 = 0
-    while i0 < N:
-        ii = min(tile, N - i0)
-
-        # Accumulate contributions across P for this row tile
-        for l in range(P):
-            # Compute tmp = A_block (ii x M) @ B[:, l:(l+1)] (M x 1) once
-            tmp = cache2.parentcache.calloc(ii, 1)
-            simulate.matmul_short_long_short_cache(
-                cache2,
-                a[i0:i0 + ii, :],
-                b[:, l:(l + 1)],
-                tmp,
-            )
-
-            # Now sweep across column tiles and accumulate into out
-            k0 = 0
-            while k0 < R:
-                kk = min(tile, R - k0)
-                out_tile_view = out[i0:i0 + ii, k0:k0 + kk]
-                out_tile = cache2.load(out_tile_view)
-                c_row = cache2.load(c[l:(l + 1), k0:k0 + kk])
-                cache2.parentcache.run(simulate.matmulsimple, tmp, c_row, out_tile)
-                cache2.parentcache.free(c_row)
-                # Write updated tile back to parent view
-                cache2.store_to(out_tile, out_tile_view)
-                k0 += tile
-
-            # Done with tmp for this l
-            cache2.parentcache.free(tmp)
-
-        i0 += tile
-
-    return out
 def _new_cache(L1_size=100000, L0_size=256):
     # New BinOpx to keep timing separate per run
     op = simulator.BinOpx([], 0, [], 0, [], 0, simulate.muladdsimple, 1)
@@ -156,38 +108,18 @@ def _run_example(n, m, p, r, title):
         )
     )
 
-    # Fused implementation (tile-wise, recompute-safe)
-    cache_fused = _new_cache()
-    A2 = cache_fused.calloc(n, m)
-    B2 = cache_fused.calloc(m, p)
-    C2 = cache_fused.calloc(p, r)
-    OUT2 = cache_fused.calloc(n, r)
-    matmul3_fused(cache_fused, A2, B2, C2, OUT2)
-    bw_fused = cache_fused.parent
-    op_fused = bw_fused.cache.parent
-    util_fused = simulator.utilization(cache_fused)
-    print(
-        "fused:      input={inp} output={out} total={tot} cpu={cpu} util={util:.3f}".format(
-            inp=bw_fused.input,
-            out=bw_fused.output,
-            tot=bw_fused.input + bw_fused.output,
-            cpu=op_fused.time,
-            util=util_fused,
-        )
-    )
-
     # Fused precompute implementation (reduced store traffic)
     cache_pre = _new_cache()
     A3 = cache_pre.calloc(n, m)
     B3 = cache_pre.calloc(m, p)
     C3 = cache_pre.calloc(p, r)
     OUT3 = cache_pre.calloc(n, r)
-    matmul3_fused_precompute(cache_pre, A3, B3, C3, OUT3)
+    matmul3_fused(cache_pre, A3, B3, C3, OUT3)
     bw_pre = cache_pre.parent
     op_pre = bw_pre.cache.parent
     util_pre = simulator.utilization(cache_pre)
     print(
-        "fused-pre: input={inp} output={out} total={tot} cpu={cpu} util={util:.3f}".format(
+        "fused:      input={inp} output={out} total={tot} cpu={cpu} util={util:.3f}".format(
             inp=bw_pre.input,
             out=bw_pre.output,
             tot=bw_pre.input + bw_pre.output,
@@ -196,11 +128,10 @@ def _run_example(n, m, p, r, title):
         )
     )
 
-    # Simple bandwidth comparison among the three
+    # Simple bandwidth comparison among the two
     totals = [
         ("two-matmul", bw_two.input + bw_two.output),
-        ("fused", bw_fused.input + bw_fused.output),
-        ("fused-pre", bw_pre.input + bw_pre.output),
+        ("fused", bw_pre.input + bw_pre.output),
     ]
     best = min(totals, key=lambda x: x[1])
     print(f"-> lowest bandwidth: {best[0]}")
