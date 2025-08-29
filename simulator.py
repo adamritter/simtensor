@@ -229,8 +229,11 @@ class BinOpx:
                 m = p[i + 1][1]  # columns of the right matrix at this step
                 ops += d0 * k * m
             time = ops * self.t
-            # Build the key with trailing zeros for compatibility
-            key = tuple([item for shp in p for item in (shp, 0)])
+            # Build the key with trailing zeros for compatibility, and append
+            # (output_dims, cache_level) where output_dims=(d0, d_last)
+            key_core = tuple([item for shp in p for item in (shp, 0)])
+            out_dims = (p[0][0], p[-1][1])
+            key = key_core + (out_dims, self.clevel)
             r[key] = [time]
         return r
 
@@ -457,20 +460,26 @@ class Bandwidth:
         prev_level = getattr(self.cache, 'level', 0)
         out = {}
         for key, v in base.items():
-            # Base: unchanged placement, zero bw time for this link
-            out[tuple(key)] = v + [0]
-            # Duplicate per-operand if that operand is at previous level
+            base_key = tuple(key)
+            out[base_key] = v + [0]
             if len(key) % 2 != 0:
                 # Unexpected; skip duplication
                 continue
+            # Collect even indices (shape positions) at prev_level
+            candidate_idxs = []
             for i in range(0, len(key), 2):
-                shape = key[i]
                 lvl = key[i + 1]
                 if isinstance(lvl, int) and lvl == prev_level:
+                    candidate_idxs.append(i)
+            from itertools import combinations
+
+            for r in range(1, len(candidate_idxs) + 1):
+                for subset in combinations(candidate_idxs, r):
                     kl = list(key)
-                    kl[i + 1] = lvl + 1
-                    bw_words = shape_elems(shape)
-                    # Shared vs separate lines both use input cost here
+                    bw_words = 0
+                    for i in subset:
+                        kl[i + 1] = prev_level + 1
+                        bw_words += shape_elems(kl[i])
                     bw_time = bw_words * self.input_clocks_per_word
                     out[tuple(kl)] = v + [bw_time]
         return out
