@@ -90,7 +90,8 @@ def _new_cache(L1_size=100000, L0_size=256):
 
 def _run_example(n, m, p, r, title):
     print(f"\n=== {title}: {n}x{m} * {m}x{p} * {p}x{r} ===")
-    expected_ops = n * m * p + m * p * r
+    # Two matmuls: (n x m) @ (m x p) costs n*m*p, then (n x p) @ (p x r) costs n*p*r
+    expected_ops = n * m * p + n * p * r
     print(f"expected ops: {expected_ops}")
 
     # Two-matmul baseline
