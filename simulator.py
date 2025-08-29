@@ -136,9 +136,43 @@ class Tensor:
         r.append("]")
         return "".join(r)
 
+    @classmethod
+    def zeros(cls, *shape, level=0):
+        """Create a new zero-initialized Tensor with the given shape.
 
+        Usage:
+        - Tensor.zeros(2, 3) -> 2x3 zeros at level 0
+        - Tensor.zeros([2, 3], level=1) -> 2x3 zeros at level 1
+        - Tensor.zeros() -> scalar zero
+        """
+        if len(shape) == 1 and isinstance(shape[0], (list, tuple)):
+            shape = tuple(shape[0])
+        sz = list(shape)
+        if len(sz) == 0:
+            data = [0]
+            return cls(data, level, [])
+        count = 1
+        for d in sz:
+            count *= d
+        data = [0] * count
+        return cls(data, level, sz)
 
+    def zero_(self):
+        """In-place: set all elements in this Tensor view to zero."""
+        if self.sz == []:
+            self.data[self.offset] = 0
+            self.value = 0
+            return
+        def rec(dim, off):
+            if dim == len(self.sz):
+                self.data[off] = 0
+                return
+            step = self.skips[dim]
+            for i in range(self.sz[dim]):
+                rec(dim + 1, off + i * step)
+        rec(0, self.offset)
 class BinOpx:
+
     """Binary operation wrapper with timing.
 
     Run enforces operand cache levels, calls the provided function `f(a,b,c)`,
@@ -166,6 +200,39 @@ class BinOpx:
 
     def __repr__(self):
         return f"<BinOpx time: {self.time}>"
+
+
+
+
+    def dynamic_times(self, params):
+        """Return compute time for matmul chains on this BinOpx.
+
+        Each item p in `params` is a sequence of matrix shapes forming a valid chain:
+        p = ((d0,d1), (d1,d2), ..., (d{n-1}, d{n})), with n >= 2.
+
+        We assume left-associative evaluation for time estimation:
+        total_ops = sum_{i=0..n-2} d0 * d{i+1} * d{i+2}
+        time = total_ops * self.t
+
+        The key mirrors prior convention by interleaving a trailing 0 marker after each shape:
+        key = ((d0,d1), 0, (d1,d2), 0, ..., (d{n-1}, d{n}), 0)
+        """
+        r = {}
+        for p in params:
+            if len(p) < 2:
+                continue
+            d0 = p[0][0]
+            # Sum left-associated matmul costs along the chain
+            ops = 0
+            for i in range(len(p) - 1):
+                k = p[i][1]      # inner/shared dim for this step
+                m = p[i + 1][1]  # columns of the right matrix at this step
+                ops += d0 * k * m
+            time = ops * self.t
+            # Build the key with trailing zeros for compatibility
+            key = tuple([item for shp in p for item in (shp, 0)])
+            r[key] = [time]
+        return r
 
 
 class Cache:
@@ -294,6 +361,18 @@ class Cache:
     def __repr__(self):
         return f"<Cache level {self.level}, used: {self.used}, size: {self.size}, parent: {self.parent}>"
 
+
+
+    def dynamic_times(self, params):
+        """Filter params by capacity and delegate to compute node dynamic_times.
+
+        Filters out shapes where a*b*d >= self.size (using ((a,b),(b,d)) format),
+        then calls the compute node (BinOpx) dynamic_times.
+        """
+        # capacity filter
+        params2 = [((a, b), (c, d)) for ((a, b), (c, d)) in params if a * b * d < self.size]
+        # find compute node: either parent is BinOpx or Bandwidth->Cache->BinOpx
+        return self.parent.dynamic_times(params2)
 class Bandwidth:
     """Bandwidth link between caches with simple timing model.
 
@@ -350,6 +429,53 @@ class Bandwidth:
         )
 
 
+    def dynamic_times(self, params):
+        """Augment compute dynamic_times with bandwidth-level variants and timing.
+
+        First delegates to the downstream cache (or compute node) to obtain the
+        base CPU time mapping. Then, for each entry, produces:
+        - A base variant with zero bandwidth time for this link.
+        - For each operand in the key that is at the previous level, a duplicated
+        entry with that operand promoted one level and bandwidth time added for
+        moving its words across this link.
+
+        Keys follow the convention from BinOpx.dynamic_times: tuple alternating
+        (shape, level_marker), e.g., ((a,b), 0, (b,d), 0, ...).
+        Returns a dict: key_variant -> [cpu_time, bw_time_for_this_link].
+        """
+        # Delegate to the child cache to get compute-time map
+        base = {}
+        if hasattr(self.cache, 'dynamic_times'):
+            base = self.cache.dynamic_times(params)
+
+        def shape_elems(shape):
+            n = 1
+            for d in shape:
+                n *= d
+            return n
+
+        prev_level = getattr(self.cache, 'level', 0)
+        out = {}
+        for key, v in base.items():
+            # Base: unchanged placement, zero bw time for this link
+            out[tuple(key)] = v + [0]
+            # Duplicate per-operand if that operand is at previous level
+            if len(key) % 2 != 0:
+                # Unexpected; skip duplication
+                continue
+            for i in range(0, len(key), 2):
+                shape = key[i]
+                lvl = key[i + 1]
+                if isinstance(lvl, int) and lvl == prev_level:
+                    kl = list(key)
+                    kl[i + 1] = lvl + 1
+                    bw_words = shape_elems(shape)
+                    # Shared vs separate lines both use input cost here
+                    bw_time = bw_words * self.input_clocks_per_word
+                    out[tuple(kl)] = v + [bw_time]
+        return out
+
+
 def utilization(cache):
     """
     Compute utilization for a cache hierarchy rooted at `cache`.
@@ -362,7 +488,8 @@ def utilization(cache):
     # Accumulate the maximum bandwidth time along the chain
     max_bw_time = 0
     c = cache
-    while isinstance(c.parent, Bandwidth):
+    # Be defensive in case `cache` is not a Cache or has no parent
+    while hasattr(c, 'parent') and isinstance(getattr(c, 'parent', None), Bandwidth):
         bw = c.parent
         if bw.time > max_bw_time:
             max_bw_time = bw.time
@@ -384,7 +511,8 @@ def reset_counters(cache):
     - Sets the compute node's (BinOpx) time to 0
     """
     c = cache
-    while isinstance(c.parent, Bandwidth):
+    # Walk down bandwidth links if present; tolerate inputs without `.parent`
+    while hasattr(c, 'parent') and isinstance(getattr(c, 'parent', None), Bandwidth):
         bw = c.parent
         bw.input = 0
         bw.output = 0
