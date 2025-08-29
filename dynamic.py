@@ -9,8 +9,8 @@ from simulate import muladd
 
 
 if __name__ == "__main__":
-    print((Cache(12, muladd)).dynamic_times(2, 100))
-    # print(muladd.dynamic_times(2, 100))
+    #print((Cache(12, muladd)).dynamic_times(2, 100))
+    print(muladd.dynamic_times(2, 100))
 
 
 

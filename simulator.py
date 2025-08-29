@@ -53,6 +53,34 @@ class Tensor:
             r*=i
         return r
 
+    def enumerate_power_triples(self, base: int, limit: int):
+        """Enumerate all (a,b,c) that are powers of `base` with product p<=limit.
+
+        Finds the largest power p = base^k such that p <= limit, then enumerates
+        nonnegative exponent triples (e1, e2, e3) with e1+e2+e3 = k. Returns a
+        mapping mirroring the matmul key format used elsewhere:
+
+          ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
+
+        where a=base^e1, b=base^e2, c=base^e3.
+        """
+        if base < 2:
+            raise ValueError("base must be >= 2")
+        p = 1
+        exp = 0
+        while p * base <= limit:
+            p *= base
+            exp += 1
+        out = {}
+        pow_cache = [base ** e for e in range(exp + 1)]
+        for e1 in range(exp + 1):
+            for e2 in range(exp - e1 + 1):
+                e3 = exp - e1 - e2
+                a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
+                key = ((a, b), 0, (b, c), 0, (a, c), 0)
+                out[key] = [a * b * c]
+        return out
+
     def sum(self):
         """Return the sum of elements in the view (recursive)."""
         if self.sz == []:
@@ -61,6 +89,34 @@ class Tensor:
         for i in range(self.sz[0]):
             r+=self[i].sum()
         return r
+
+    def enumerate_power_triples(self, base: int, limit: int):
+        """Enumerate all (a,b,c) that are powers of `base` with product p<=limit.
+
+        Finds the largest power p = base^k such that p <= limit, then enumerates
+        nonnegative exponent triples (e1, e2, e3) with e1+e2+e3 = k. Returns a
+        mapping mirroring the matmul key format used elsewhere:
+
+          ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
+
+        where a=base^e1, b=base^e2, c=base^e3.
+        """
+        if base < 2:
+            raise ValueError("base must be >= 2")
+        p = 1
+        exp = 0
+        while p * base <= limit:
+            p *= base
+            exp += 1
+        out = {}
+        pow_cache = [base ** e for e in range(exp + 1)]
+        for e1 in range(exp + 1):
+            for e2 in range(exp - e1 + 1):
+                e3 = exp - e1 - e2
+                a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
+                key = ((a, b), 0, (b, c), 0, (a, c), 0)
+                out[key] = [a * b * c]
+        return out
 
     def __getitem__(self, key):
         """Return a Tensor view using basic int/slice indexing.
@@ -97,6 +153,34 @@ class Tensor:
             offset = r.offset + r.skips[1]*key2
             r = Tensor(r.data, r.level, [r.sz[0]]+r.sz[2:], offset, [r.skips[0]]+ r.skips[2:])
         return r
+
+    def enumerate_power_triples(self, base: int, limit: int):
+        """Enumerate all (a,b,c) that are powers of `base` with product p<=limit.
+
+        Finds the largest power p = base^k such that p <= limit, then enumerates
+        nonnegative exponent triples (e1, e2, e3) with e1+e2+e3 = k. Returns a
+        mapping mirroring the matmul key format used elsewhere:
+
+          ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
+
+        where a=base^e1, b=base^e2, c=base^e3.
+        """
+        if base < 2:
+            raise ValueError("base must be >= 2")
+        p = 1
+        exp = 0
+        while p * base <= limit:
+            p *= base
+            exp += 1
+        out = {}
+        pow_cache = [base ** e for e in range(exp + 1)]
+        for e1 in range(exp + 1):
+            for e2 in range(exp - e1 + 1):
+                e3 = exp - e1 - e2
+                a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
+                key = ((a, b), 0, (b, c), 0, (a, c), 0)
+                out[key] = [a * b * c]
+        return out
 
     def __setitem__(self, key, value):
         """Assign a scalar value via integer indexing into the view."""
@@ -226,22 +310,7 @@ class BinOpx:
         # Mode 2: (base, limit) enumeration
         if len(args) == 2 and all(isinstance(x, int) for x in args):
             base, limit = args
-            if base < 2:
-                raise ValueError("base must be >= 2")
-            p = 1
-            exp = 0
-            while p * base <= limit:
-                p *= base
-                exp += 1
-            out = {}
-            pow_cache = [base ** e for e in range(exp + 1)]
-            for e1 in range(exp + 1):
-                for e2 in range(exp - e1 + 1):
-                    e3 = exp - e1 - e2
-                    a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
-                    key = ((a, b), 0, (b, c), 0, (a, c), 0)
-                    out[key] = [a * b * c]
-            return out
+            return self.enumerate_power_triples(base, limit)
 
         # Mode 1: original list-of-chains interface
         if len(args) != 1:
@@ -266,6 +335,34 @@ class BinOpx:
             key = key_core + (out_dims, self.clevel)
             r[key] = [time]
         return r
+
+    def enumerate_power_triples(self, base: int, limit: int):
+        """Enumerate all (a,b,c) that are powers of `base` with product p<=limit.
+
+        Finds the largest power p = base^k such that p <= limit, then enumerates
+        nonnegative exponent triples (e1, e2, e3) with e1+e2+e3 = k. Returns a
+        mapping mirroring the matmul key format used elsewhere:
+
+          ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
+
+        where a=base^e1, b=base^e2, c=base^e3.
+        """
+        if base < 2:
+            raise ValueError("base must be >= 2")
+        p = 1
+        exp = 0
+        while p * base <= limit:
+            p *= base
+            exp += 1
+        out = {}
+        pow_cache = [base ** e for e in range(exp + 1)]
+        for e1 in range(exp + 1):
+            for e2 in range(exp - e1 + 1):
+                e3 = exp - e1 - e2
+                a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
+                key = ((a, b), 0, (b, c), 0, (a, c), 0)
+                out[key] = [a * b * c]
+        return out
 
 
 class Cache:
