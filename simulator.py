@@ -447,9 +447,7 @@ class Bandwidth:
         Returns a dict: key_variant -> [cpu_time, bw_time_for_this_link].
         """
         # Delegate to the child cache to get compute-time map
-        base = {}
-        if hasattr(self.cache, 'dynamic_times'):
-            base = self.cache.dynamic_times(params)
+        base = self.cache.dynamic_times(params)
 
         def shape_elems(shape):
             n = 1
