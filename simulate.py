@@ -9,6 +9,9 @@ def muladdsimple(a, b, c):
 # Basic multiply-add operation used by matmul
 muladd = simulator.BinOpx([], 0, [], 0, [], 0, muladdsimple, 1)
 
+## dynamic_times combos are now implemented in simulator.BinOpx; no monkey patching here.
+
+
 
 def matmulsimple(muladdop, a, b, c):
     for i in range(a.sz[0]):

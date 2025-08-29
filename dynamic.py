@@ -9,7 +9,8 @@ from simulate import muladd
 
 
 if __name__ == "__main__":
-    print(Bandwidth(Cache(12, muladd)).dynamic_times([((1, 2), (2, 4))]))
+    #print(Bandwidth(Cache(12, muladd)).dynamic_times(2, 100))
+    print(muladd.dynamic_times(2, 100))
 
 
 

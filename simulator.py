@@ -204,19 +204,49 @@ class BinOpx:
 
 
 
-    def dynamic_times(self, params):
-        """Return compute time for matmul chains on this BinOpx.
+    def dynamic_times(self, *args):
+        """Return timing dictionaries for matmul shape chains.
 
-        Each item p in `params` is a sequence of matrix shapes forming a valid chain:
-        p = ((d0,d1), (d1,d2), ..., (d{n-1}, d{n})), with n >= 2.
+        Two modes are supported for convenience:
 
-        We assume left-associative evaluation for time estimation:
-        total_ops = sum_{i=0..n-2} d0 * d{i+1} * d{i+2}
-        time = total_ops * self.t
+        1) Explicit chain mode (backward-compatible):
+           dynamic_times([((d0,d1), (d1,d2), ..., (d{n-1}, d{n})), ...]) -> dict
+           For each chain, estimates left-associated operation count and returns
+           a mapping:
+             ((d0,d1), 0, (d1,d2), 0, ..., (d{n-1}, d{n}), 0, (d0,d{n}), clevel) -> [cpu_time]
 
-        The key mirrors prior convention by interleaving a trailing 0 marker after each shape:
-        key = ((d0,d1), 0, (d1,d2), 0, ..., (d{n-1}, d{n}), 0)
+        2) Power-of-base enumeration mode:
+           dynamic_times(base: int, limit: int) -> dict
+           Finds the largest power p = base^k <= limit and enumerates all triples
+           (a,b,c) of powers of `base` such that a*b*c = p. For each triple,
+           returns a single-matmul-chain-like key:
+             ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
+           which mirrors the format used elsewhere in the repo.
         """
+        # Mode 2: (base, limit) enumeration
+        if len(args) == 2 and all(isinstance(x, int) for x in args):
+            base, limit = args
+            if base < 2:
+                raise ValueError("base must be >= 2")
+            p = 1
+            exp = 0
+            while p * base <= limit:
+                p *= base
+                exp += 1
+            out = {}
+            pow_cache = [base ** e for e in range(exp + 1)]
+            for e1 in range(exp + 1):
+                for e2 in range(exp - e1 + 1):
+                    e3 = exp - e1 - e2
+                    a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
+                    key = ((a, b), 0, (b, c), 0, (a, c), 0)
+                    out[key] = [a * b * c]
+            return out
+
+        # Mode 1: original list-of-chains interface
+        if len(args) != 1:
+            raise TypeError("dynamic_times expects either (params_list) or (base:int, limit:int)")
+        params = args[0]
         r = {}
         for p in params:
             if len(p) < 2:
