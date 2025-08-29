@@ -1,6 +1,32 @@
 import simulator
 import simulate
 
+def matmul_store(cache2, a, b, c, tile=4):
+    """Tile-based matmul that writes results back using store_to.
+    Shapes: a (N x M), b (M x K), c (N x K)
+    """
+    n = tile
+    i = 0
+    while i < c.sz[0]:
+        j = 0
+        while j < c.sz[1]:
+            # Load output tile into L0
+            c_tile_view = c[i:i + n, j:j + n]
+            cc = cache2.load(c_tile_view)
+            # Short-long-short across the shared dimension to keep L0 usage small
+            shared = a.sz[1]
+            for t in range(shared):
+                aa_col = cache2.load(a[i:(i + n), t:(t + 1)])  # (n x 1)
+                bb_row = cache2.load(b[t:(t + 1), j:(j + n)])  # (1 x n)
+                cache2.parentcache.run(simulate.matmulsimple, aa_col, bb_row, cc)
+                cache2.parentcache.free(aa_col)
+                cache2.parentcache.free(bb_row)
+            # Store the tile back to parent view
+            cache2.store_to(cc, c_tile_view)
+            j += n
+        i += n
+
+
 def matmul3_two(cache2, a, b, c, out):
     """Compute (a @ b) @ c using two matmul calls with an explicit temporary."""
     tmp = cache2.calloc(a.sz[0], b.sz[1])
@@ -33,16 +59,15 @@ def matmul3_fused_precompute(cache2, a, b, c, out, tile=4):
     while i0 < N:
         ii = min(tile, N - i0)
 
-        # Precompute TMP = A_block @ B for this row tile: shape (ii x P)
+        # Precompute TMP = A_block @ B for this row tile in a single call
+        # Shapes: A_block (ii x M), B (M x P) => TMP (ii x P)
         tmpbuf = cache2.parentcache.calloc(ii, P)
-        for l in range(P):
-            tmp_col = tmpbuf[:, l:(l + 1)]
-            simulate.matmul_short_long_short_cache(
-                cache2,
-                a[i0:i0 + ii, :],
-                b[:, l:(l + 1)],
-                tmp_col,
-            )
+        simulate.matmul_short_long_short_cache(
+            cache2,
+            a[i0:i0 + ii, :],
+            b,
+            tmpbuf,
+        )
 
         # Now sweep output column tiles; keep each out tile resident and only
         # store once after accumulating all l contributions.
@@ -52,9 +77,9 @@ def matmul3_fused_precompute(cache2, a, b, c, out, tile=4):
             out_tile_view = out[i0:i0 + ii, k0:k0 + kk]
             out_tile = cache2.load(out_tile_view)
 
+            # Multiply using outer products: tmpbuf is in L0, so load only C rows
             for l in range(P):
                 tmp_col = tmpbuf[:, l:(l + 1)]
-                # C row segment for these kk columns
                 c_row = cache2.load(c[l:(l + 1), k0:k0 + kk])
                 cache2.parentcache.run(simulate.matmulsimple, tmp_col, c_row, out_tile)
                 cache2.parentcache.free(c_row)
