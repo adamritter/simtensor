@@ -95,3 +95,13 @@ if __name__ == "__main__":
     matmul(cache2, a, b, c)
     print(cache2)
     print("utilization:", simulator.utilization(cache2))
+    bw = cache2.parent
+    op = bw.cache.parent
+    expected_ops = a.sz[0] * a.sz[1] * b.sz[1]
+    assert op.time == expected_ops
+    print("cpu operations:", op.time)
+
+    import matmul3
+
+    matmul3._run_example(8, 1, 8, 1, "Skinny * Wide * Skinny")
+    matmul3._run_example(8, 4, 4, 8, "Square-ish triple")
