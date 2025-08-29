@@ -560,6 +560,114 @@ class Bandwidth:
                         bw_words += shape_elems(kl[i])
                     bw_time = bw_words * self.input_clocks_per_word
                     out[tuple(kl)] = v + [bw_time]
+
+        # Dynamic programming expansion at the bandwidth level.
+        # Use a priority queue ordered by CPU time; while the smallest CPU time
+        # key is within half the allowed budget, attempt to double the shared
+        # dimension between adjacent matrices that both reside at this bandwidth
+        # cache level. Update times if improved and push new keys if added.
+        def _dp_expand(mapping):
+            import heapq
+
+            max_cpu_time = max_cpu
+            bw_cache_level = prev_level + 1
+
+            # Priority queue by current cpu time
+            pq = []
+            for k, times in mapping.items():
+                if not times:
+                    continue
+                heapq.heappush(pq, (times[0], k))
+
+            def _split_key(k):
+                pairs = [(k[i], k[i + 1]) for i in range(0, len(k), 2)]
+                operands = pairs[:-1]  # exclude trailing output dims
+                out_pair = pairs[-1]
+                return operands, out_pair
+
+            def _join_key(operands, out_pair):
+                flat = []
+                for shp, lvl in operands:
+                    flat.extend([shp, lvl])
+                flat.extend([out_pair[0], out_pair[1]])
+                return tuple(flat)
+
+            def _ops_for_operands(operands):
+                if len(operands) < 2:
+                    return 0
+                d0 = operands[0][0][0]
+                ops = 0
+                for i in range(len(operands) - 1):
+                    kdim = operands[i][0][1]
+                    mdim = operands[i + 1][0][1]
+                    ops += d0 * kdim * mdim
+                return ops
+
+            def _bw_time_for_key(k):
+                # Recompute bandwidth time based on shapes resident at this link's level
+                operands, out_pair = _split_key(k)
+                words = 0
+                for shp, lvl in operands + [out_pair]:
+                    if isinstance(lvl, int) and lvl == bw_cache_level:
+                        words += shape_elems(shp)
+                return words * self.input_clocks_per_word
+
+            seen = set()
+            while pq:
+                cpu, key = heapq.heappop(pq)
+                if (cpu, key) in seen:
+                    continue
+                seen.add((cpu, key))
+                if cpu > max_cpu_time // 2:
+                    continue
+                operands, out_pair = _split_key(key)
+                if len(operands) < 2:
+                    continue
+                # For each adjacent pair at the bandwidth cache level, try doubling
+                for i in range(len(operands) - 1):
+                    (a_shp, a_lvl) = operands[i]
+                    (b_shp, b_lvl) = operands[i + 1]
+                    if a_lvl != bw_cache_level or b_lvl != bw_cache_level:
+                        continue
+                    a0, a1 = a_shp
+                    b0, b1 = b_shp
+                    if a1 != b0:
+                        continue
+                    # Double the shared inner dimension for both matrices
+                    new_operands = list(operands)
+                    new_operands[i] = ((a0, a1 * 2), a_lvl)
+                    new_operands[i + 1] = ((b0 * 2, b1), b_lvl)
+
+                    # Estimate new cpu time proportionally to op count change
+                    old_ops = _ops_for_operands(operands)
+                    new_ops = _ops_for_operands(new_operands)
+                    if old_ops == 0:
+                        continue
+                    new_cpu = int(mapping[key][0] * new_ops / old_ops)
+                    if new_cpu > max_cpu_time:
+                        continue
+
+                    new_key = _join_key(new_operands, out_pair)
+                    new_bw = _bw_time_for_key(new_key)
+
+                    if new_key not in mapping:
+                        mapping[new_key] = [new_cpu, new_bw]
+                        heapq.heappush(pq, (new_cpu, new_key))
+                    else:
+                        cur_cpu, cur_bw = mapping[new_key]
+                        updated = False
+                        if new_cpu < cur_cpu:
+                            cur_cpu = new_cpu
+                            updated = True
+                        if new_bw < cur_bw:
+                            cur_bw = new_bw
+                            updated = True
+                        if updated:
+                            mapping[new_key] = [cur_cpu, cur_bw]
+                            heapq.heappush(pq, (cur_cpu, new_key))
+            return mapping
+
+        out = _dp_expand(out)
         return out
 
 
