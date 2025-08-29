@@ -1,33 +1,6 @@
 import simulator
 import simulate
 
-
-def matmul_store(cache2, a, b, c, tile=4):
-    """Tile-based matmul that writes results back using store_to.
-    Shapes: a (N x M), b (M x K), c (N x K)
-    """
-    n = tile
-    i = 0
-    while i < c.sz[0]:
-        j = 0
-        while j < c.sz[1]:
-            # Load output tile into L0
-            c_tile_view = c[i:i + n, j:j + n]
-            cc = cache2.load(c_tile_view)
-            # Short-long-short across the shared dimension to keep L0 usage small
-            shared = a.sz[1]
-            for t in range(shared):
-                aa_col = cache2.load(a[i:(i + n), t:(t + 1)])  # (n x 1)
-                bb_row = cache2.load(b[t:(t + 1), j:(j + n)])  # (1 x n)
-                cache2.parentcache.run(simulate.matmulsimple, aa_col, bb_row, cc)
-                cache2.parentcache.free(aa_col)
-                cache2.parentcache.free(bb_row)
-            # Store the tile back to parent view
-            cache2.store_to(cc, c_tile_view)
-            j += n
-        i += n
-
-
 def matmul3_two(cache2, a, b, c, out):
     """Compute (a @ b) @ c using two matmul calls with an explicit temporary."""
     tmp = cache2.calloc(a.sz[0], b.sz[1])
@@ -35,12 +8,19 @@ def matmul3_two(cache2, a, b, c, out):
     simulate.matmul(cache2, tmp, c, out)
     return out
 
+def matmul3_fused_precompute(cache2, a, b, c, out, tile=4):
+    """Fused triple product with reduced store traffic by precomputing A@B cols.
 
-def matmul3_fused(cache2, a, b, c, out, tile=4):
-    """Fused triple product: out = (a @ b) @ c, avoiding full (a @ b).
+    Strategy:
+    - For each row tile (ii) of A, precompute and keep in L0 the temporary
+      matrix TMP (ii x P) whose l-th column is A_block @ B[:, l]. This ensures
+      we compute each tmp column exactly once.
+    - Then iterate over output column tiles (kk). For each tile, load the
+      out-tile once, and sweep l=0..P-1, multiplying TMP[:, l] by C[l, k0:k0+kk]
+      to accumulate into the out tile. Finally, store the out tile back once.
 
-    Reuses `simulate.matmul_short_long_short_cache` for the A @ (B[:, l]) step,
-    then applies an outer product with C[l, :] per l-tile to accumulate into out.
+    This reduces bandwidth by avoiding repeated load/store of the same out tile
+    for each l, while also avoiding recomputation of tmp across k-tiles.
     """
     N, M = a.sz[0], a.sz[1]
     assert M == b.sz[0]
@@ -52,33 +32,94 @@ def matmul3_fused(cache2, a, b, c, out, tile=4):
     i0 = 0
     while i0 < N:
         ii = min(tile, N - i0)
+
+        # Precompute TMP = A_block @ B for this row tile: shape (ii x P)
+        tmpbuf = cache2.parentcache.calloc(ii, P)
+        for l in range(P):
+            tmp_col = tmpbuf[:, l:(l + 1)]
+            simulate.matmul_short_long_short_cache(
+                cache2,
+                a[i0:i0 + ii, :],
+                b[:, l:(l + 1)],
+                tmp_col,
+            )
+
+        # Now sweep output column tiles; keep each out tile resident and only
+        # store once after accumulating all l contributions.
         k0 = 0
         while k0 < R:
             kk = min(tile, R - k0)
-            # Work on a small output tile
             out_tile_view = out[i0:i0 + ii, k0:k0 + kk]
             out_tile = cache2.load(out_tile_view)
 
-            # Accumulate contributions across P
             for l in range(P):
-                # tmp = a_block @ b_column(l), kept in L0
-                tmp = cache2.parentcache.calloc(ii, 1)
-                simulate.matmul_short_long_short_cache(cache2, a[i0:i0 + ii, :], b[:, l:(l + 1)], tmp)
-
-                # Multiply tmp (ii x 1) by c_row (1 x kk) into out_tile
+                tmp_col = tmpbuf[:, l:(l + 1)]
+                # C row segment for these kk columns
                 c_row = cache2.load(c[l:(l + 1), k0:k0 + kk])
-                cache2.parentcache.run(simulate.matmulsimple, tmp, c_row, out_tile)
-                cache2.parentcache.free(tmp)
+                cache2.parentcache.run(simulate.matmulsimple, tmp_col, c_row, out_tile)
                 cache2.parentcache.free(c_row)
 
-            # Store the tile back to the parent cache
+            # After full accumulation, write back the completed out tile once
             cache2.store_to(out_tile, out_tile_view)
             k0 += tile
+
+        # Free TMP buffer for this row tile
+        cache2.parentcache.free(tmpbuf)
+
         i0 += tile
 
     return out
 
 
+def matmul3_fused(cache2, a, b, c, out, tile=4):
+    """Fused triple product: out = (a @ b) @ c without forming the (a @ b) temp.
+
+    For each row-tile of A (size ii), we compute tmp = A_block @ B[:, l]
+    once per l, then sweep across the output column-tiles k0 and accumulate
+    tmp @ C[l, k0:k0+kk] into the corresponding out tiles. This avoids
+    recomputing tmp for each k0 (which previously over-counted compute).
+    """
+    N, M = a.sz[0], a.sz[1]
+    assert M == b.sz[0]
+    P = b.sz[1]
+    assert P == c.sz[0]
+    R = c.sz[1]
+    assert out.sz == [N, R]
+
+    i0 = 0
+    while i0 < N:
+        ii = min(tile, N - i0)
+
+        # Accumulate contributions across P for this row tile
+        for l in range(P):
+            # Compute tmp = A_block (ii x M) @ B[:, l:(l+1)] (M x 1) once
+            tmp = cache2.parentcache.calloc(ii, 1)
+            simulate.matmul_short_long_short_cache(
+                cache2,
+                a[i0:i0 + ii, :],
+                b[:, l:(l + 1)],
+                tmp,
+            )
+
+            # Now sweep across column tiles and accumulate into out
+            k0 = 0
+            while k0 < R:
+                kk = min(tile, R - k0)
+                out_tile_view = out[i0:i0 + ii, k0:k0 + kk]
+                out_tile = cache2.load(out_tile_view)
+                c_row = cache2.load(c[l:(l + 1), k0:k0 + kk])
+                cache2.parentcache.run(simulate.matmulsimple, tmp, c_row, out_tile)
+                cache2.parentcache.free(c_row)
+                # Write updated tile back to parent view
+                cache2.store_to(out_tile, out_tile_view)
+                k0 += tile
+
+            # Done with tmp for this l
+            cache2.parentcache.free(tmp)
+
+        i0 += tile
+
+    return out
 def _new_cache(L1_size=100000, L0_size=256):
     # New BinOpx to keep timing separate per run
     op = simulator.BinOpx([], 0, [], 0, [], 0, simulate.muladdsimple, 1)
@@ -114,7 +155,7 @@ def _run_example(n, m, p, r, title):
         )
     )
 
-    # Fused implementation
+    # Fused implementation (tile-wise, recompute-safe)
     cache_fused = _new_cache()
     A2 = cache_fused.calloc(n, m)
     B2 = cache_fused.calloc(m, p)
@@ -134,10 +175,34 @@ def _run_example(n, m, p, r, title):
         )
     )
 
-    if (bw_fused.input + bw_fused.output) < (bw_two.input + bw_two.output):
-        print("-> fused uses less bandwidth")
-    else:
-        print("-> two-matmul uses less or equal bandwidth")
+    # Fused precompute implementation (reduced store traffic)
+    cache_pre = _new_cache()
+    A3 = cache_pre.calloc(n, m)
+    B3 = cache_pre.calloc(m, p)
+    C3 = cache_pre.calloc(p, r)
+    OUT3 = cache_pre.calloc(n, r)
+    matmul3_fused_precompute(cache_pre, A3, B3, C3, OUT3)
+    bw_pre = cache_pre.parent
+    op_pre = bw_pre.cache.parent
+    util_pre = simulator.utilization(cache_pre)
+    print(
+        "fused-pre: input={inp} output={out} total={tot} cpu={cpu} util={util:.3f}".format(
+            inp=bw_pre.input,
+            out=bw_pre.output,
+            tot=bw_pre.input + bw_pre.output,
+            cpu=op_pre.time,
+            util=util_pre,
+        )
+    )
+
+    # Simple bandwidth comparison among the three
+    totals = [
+        ("two-matmul", bw_two.input + bw_two.output),
+        ("fused", bw_fused.input + bw_fused.output),
+        ("fused-pre", bw_pre.input + bw_pre.output),
+    ]
+    best = min(totals, key=lambda x: x[1])
+    print(f"-> lowest bandwidth: {best[0]}")
 
 
 if __name__ == "__main__":
