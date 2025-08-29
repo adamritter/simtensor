@@ -76,6 +76,43 @@ class TestMatmul3(unittest.TestCase):
 
         self.assertEqual(matrix_to_lists(OUT_two), matrix_to_lists(OUT_fused))
 
+    def test_fused_matches_two_almost_square(self):
+        N, M, P, R = 16, 8, 8, 16
+
+        L1_two = self.make_hierarchy()
+        A = L1_two.calloc(N, M)
+        B = L1_two.calloc(M, P)
+        C = L1_two.calloc(P, R)
+        for i in range(N):
+            for j in range(M):
+                A[i][j] = i * M + j + 1
+        for i in range(M):
+            for j in range(P):
+                B[i][j] = i * P + j + 1
+        for i in range(P):
+            for j in range(R):
+                C[i][j] = i * R + j + 1
+        OUT_two = L1_two.calloc(N, R)
+        matmul3.matmul3_two(L1_two, A, B, C, OUT_two)
+
+        L1_fused = self.make_hierarchy()
+        A2 = L1_fused.calloc(N, M)
+        B2 = L1_fused.calloc(M, P)
+        C2 = L1_fused.calloc(P, R)
+        for i in range(N):
+            for j in range(M):
+                A2[i][j] = i * M + j + 1
+        for i in range(M):
+            for j in range(P):
+                B2[i][j] = i * P + j + 1
+        for i in range(P):
+            for j in range(R):
+                C2[i][j] = i * R + j + 1
+        OUT_fused = L1_fused.calloc(N, R)
+        matmul3.matmul3_fused(L1_fused, A2, B2, C2, OUT_fused, tile=4)
+
+        self.assertEqual(matrix_to_lists(OUT_two), matrix_to_lists(OUT_fused))
+
 
 if __name__ == "__main__":
     unittest.main()
