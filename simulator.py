@@ -207,7 +207,7 @@ class BinOpx:
     def dynamic_times(self, *args):
         """Return timing dictionaries for matmul shape chains.
 
-        Two modes are supported for convenience:
+        Modes supported:
 
         1) Explicit chain mode (backward-compatible):
            dynamic_times([((d0,d1), (d1,d2), ..., (d{n-1}, d{n})), ...]) -> dict
@@ -215,18 +215,18 @@ class BinOpx:
            a mapping:
              ((d0,d1), 0, (d1,d2), 0, ..., (d{n-1}, d{n}), 0, (d0,d{n}), clevel) -> [cpu_time]
 
-        2) Power-of-base enumeration mode:
-           dynamic_times(base: int, limit: int) -> dict
-           Finds the largest power p = base^k <= limit and enumerates all triples
-           (a,b,c) of powers of `base` such that a*b*c = p. For each triple,
-           returns a single-matmul-chain-like key:
-             ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
-           which mirrors the format used elsewhere in the repo.
+        2) Enumeration by number of matrices and limit (base is fixed to 2):
+           dynamic_times(n_mats: int, limit: int) -> dict
+           Finds the largest power p = 2^k <= limit and enumerates all sequences
+           of dimensions (d0, d1, ..., d{n_mats}) where each di is a power of 2
+           and the product d0*d1*...*d{n_mats} <= p. For each sequence, returns
+           a key of alternating (shape, level) pairs for all adjacent matrices
+           plus the output dims, and the CPU time for the left-associated chain.
         """
-        # Mode 2: (base, limit) enumeration
+        # Mode 2: (n_mats, limit) enumeration with base fixed at 2
         if len(args) == 2 and all(isinstance(x, int) for x in args):
-            base, limit = args
-            return self.enumerate_power_triples(base, limit)
+            n_mats, limit = args
+            return self.enumerate_power_chain(n_mats, limit, base=2)
 
         # Mode 1: original list-of-chains interface
         if len(args) != 1:
@@ -253,59 +253,64 @@ class BinOpx:
         return r
 
 
-    def enumerate_power_triples(self, base: int, limit: int):
-
-        """Enumerate all (a,b,c) powers of `base` with product <= largest power.
-
+    def enumerate_power_chain(self, n_mats: int, limit: int, base: int = 2):
+        """Enumerate powers-of-two matmul chains of `n_mats` matrices.
 
         Let p = base^k be the largest power not exceeding `limit`. Enumerate all
+        sequences of exponents E = (e0, e1, ..., e{n_mats}) with nonnegative
+        integers summing to at most k. Define dimensions di = base^ei.
 
-        nonnegative exponent triples (e1, e2, e3) such that e1+e2+e3 <= k. For
-
-        each triple, produce a mapping key mirroring the matmul format:
-
-
-          ((a,b), 0, (b,c), 0, (a,c), 0) -> [a*b*c]
-
-
-        where a=base^e1, b=base^e2, c=base^e3. This includes the trivial case
-
-        (1,1,1) and all smaller products, not only those that multiply to p.
-
+        For each sequence, build the key:
+          ((d0,d1), 0, (d1,d2), 0, ..., (d{n_mats-1}, d{n_mats}), 0, (d0, d{n_mats}), 0)
+        and compute the left-associated CPU time (ops) scaled by `self.t`:
+          ops = sum_{i=1..n_mats-1} d0 * d_i * d_{i+1}
         """
-
         if base < 2:
-
             raise ValueError("base must be >= 2")
+        if n_mats < 1:
+            return {}
 
+        # Find largest exponent k with base^k <= limit
         p = 1
-
-        exp = 0
-
+        k = 0
         while p * base <= limit:
-
             p *= base
+            k += 1
 
-            exp += 1
+        # Precompute powers
+        pow_cache = [base ** e for e in range(k + 1)]
 
         out = {}
 
-        pow_cache = [base ** e for e in range(exp + 1)]
+        # Recursive enumeration of exponent tuples with bounded sum
+        exps = [0] * (n_mats + 1)
 
-        for e1 in range(exp + 1):
+        def rec(idx: int, remaining: int):
+            if idx == n_mats:
+                # Last exponent e_{n_mats} can utilize all remaining
+                for e_last in range(remaining + 1):
+                    exps[idx] = e_last
+                    # Build dims
+                    dims = [pow_cache[e] for e in exps]
+                    # Build key: all adjacent pairs plus output dims
+                    flat = []
+                    for i in range(n_mats):
+                        flat.extend([(dims[i], dims[i + 1]), 0])
+                    flat.extend([(dims[0], dims[-1]), 0])
+                    key = tuple(flat)
+                    # CPU time: left-associated cost
+                    a0 = dims[0]
+                    ops = 0
+                    for i in range(1, n_mats):
+                        ops += a0 * dims[i] * dims[i + 1]
+                    out[key] = [ops * self.t]
+                return
+            # Choose e_idx from 0..remaining and recurse
+            for e in range(remaining + 1):
+                exps[idx] = e
+                rec(idx + 1, remaining - e)
 
-            for e2 in range(exp - e1 + 1):
-
-                max_e3 = exp - e1 - e2
-
-                for e3 in range(max_e3 + 1):
-
-                    a, b, c = pow_cache[e1], pow_cache[e2], pow_cache[e3]
-
-                    key = ((a, b), 0, (b, c), 0, (a, c), 0)
-
-                    out[key] = [a * b * c]
-
+        rec(0, k)
         return out
 
 
