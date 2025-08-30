@@ -15,8 +15,9 @@ def pp(results):
 
 
 if __name__ == "__main__":
-    bw = Bandwidth(Cache(12, muladd))
-    results = muladd.dynamic_times(3, 8)
+    cache = Cache(12, muladd)
+    bw = Bandwidth(cache)
+    results = cache.dynamic_times(3, 1000)
     pp(results)
 
 

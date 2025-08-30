@@ -447,22 +447,30 @@ class Cache:
 
 
     def dynamic_times(self, nmatmuls, max_cpu):
-        """Delegate to parent dynamic_times and apply simple capacity filter.
+        """Delegate and enforce capacity: sum of resident shapes at this level <= size.
 
-        For the common two-matmul case (three dims a,b,c), we keep only entries
-        with a*b*c < self.size. Keys are expected in the form:
-          ((a,b), lvl, (b,c), lvl, (a,c), lvl)
+        Accepts any chain length. For each key (alternating (shape, level)),
+        sum the element counts for all shapes whose `level` equals this cache's
+        level. Keep entries where the sum is <= self.size.
         """
         base = self.parent.dynamic_times(nmatmuls, max_cpu)
-        if nmatmuls != 2:
-            return base
+
+        def shape_elems(shape):
+            n = 1
+            for d in shape:
+                n *= d
+            return n
+
         out = {}
         for key, v in base.items():
-            if len(key) < 4:
-                continue
-            a, b = key[0]
-            _, c = key[2]
-            if a * b * c < self.size:
+            total = 0
+            # Iterate pairs (shape, level)
+            for i in range(0, len(key), 2):
+                shp = key[i]
+                lvl = key[i + 1] if i + 1 < len(key) else None
+                if isinstance(lvl, int) and lvl == self.level:
+                    total += shape_elems(shp)
+            if total <= self.size:
                 out[key] = v
         return out
 class Bandwidth:
