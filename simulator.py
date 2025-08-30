@@ -596,8 +596,6 @@ class Bandwidth:
         # dimension between adjacent matrices that both reside at this bandwidth
         # cache level. Update times if improved and push new keys if added.
         def _dp_expand(mapping):
-            import heapq
-
             max_cpu_time = max_cpu
             bw_cache_level = prev_level + 1
 
@@ -649,31 +647,45 @@ class Bandwidth:
                         words += shape_elems(shp)
                 return words * self.input_clocks_per_word
 
-            seen = set()
-            while pq:
-                cpu, key = heapq.heappop(pq)
-                if (cpu, key) in seen:
-                    continue
-                seen.add((cpu, key))
-                if cpu > max_cpu_time // 2:
-                    continue
+            base_items = list(mapping.items())
+            for key, cur_times in base_items:
                 operands, out_pair = _split_key(key)
                 if len(operands) < 2:
                     continue
-                # For each adjacent pair at the bandwidth cache level, try doubling
-                for i in range(len(operands) - 1):
-                    (a_shp, a_lvl) = operands[i]
-                    (b_shp, b_lvl) = operands[i + 1]
-                    if a_lvl != bw_cache_level or b_lvl != bw_cache_level:
-                        continue
-                    a0, a1 = a_shp
-                    b0, b1 = b_shp
-                    if a1 != b0:
-                        continue
-                    # Double the shared inner dimension for both matrices
-                    new_operands = list(operands)
-                    new_operands[i] = ((a0, a1 * 2), a_lvl)
-                    new_operands[i + 1] = ((b0 * 2, b1), b_lvl)
+                n = len(operands)
+                for j in range(n + 1):
+                    # Build new operands/out depending on j
+                    if j == 0:
+                        (op0_shp, op0_lvl) = operands[0]
+                        if op0_lvl != bw_cache_level or out_pair[1] != bw_cache_level:
+                            continue
+                        new_operands = list(operands)
+                        a0, a1 = op0_shp
+                        new_operands[0] = ((a0 * 2, a1), op0_lvl)
+                        out_dims, out_lvl = out_pair
+                        new_out_pair = ((out_dims[0] * 2, out_dims[1]), out_lvl)
+                    elif j == n:
+                        (last_shp, last_lvl) = operands[-1]
+                        if last_lvl != bw_cache_level or out_pair[1] != bw_cache_level:
+                            continue
+                        new_operands = list(operands)
+                        b0, b1 = last_shp
+                        new_operands[-1] = ((b0, b1 * 2), last_lvl)
+                        out_dims, out_lvl = out_pair
+                        new_out_pair = ((out_dims[0], out_dims[1] * 2), out_lvl)
+                    else:
+                        (a_shp, a_lvl) = operands[j - 1]
+                        (b_shp, b_lvl) = operands[j]
+                        if a_lvl != bw_cache_level or b_lvl != bw_cache_level:
+                            continue
+                        a0, a1 = a_shp
+                        b0, b1 = b_shp
+                        if a1 != b0:
+                            continue
+                        new_operands = list(operands)
+                        new_operands[j - 1] = ((a0, a1 * 2), a_lvl)
+                        new_operands[j] = ((b0 * 2, b1), b_lvl)
+                        new_out_pair = out_pair
 
                     # Estimate new cpu time proportionally to op count change
                     old_ops = _ops_for_operands(operands)
@@ -681,28 +693,38 @@ class Bandwidth:
                     if old_ops == 0:
                         continue
                     cur_times = mapping[key]
-                    if isinstance(cur_times[0], str) and len(cur_times) > 2 and not isinstance(cur_times[1], (int, float)):
-                        cur_cpu_for_key = cur_times[2]
-                    else:
+                    if isinstance(cur_times, list) and len(cur_times) > 1 and (isinstance(cur_times[0], tuple) or isinstance(cur_times[0], str)):
                         cur_cpu_for_key = cur_times[1]
+                    else:
+                        cur_cpu_for_key = 0
                     new_cpu = int(cur_cpu_for_key * new_ops / old_ops)
                     if new_cpu > max_cpu_time:
                         continue
 
-                    new_key = _join_key(new_operands, out_pair)
+                    new_key = _join_key(new_operands, new_out_pair)
                     new_bw = _bw_time_for_key(new_key)
+                    # If doubling an internal dimension (not first or last), account for second round
+                    if 0 < j < n:
+                        out_dims, out_lvl = new_out_pair
+                        extra_words = shape_elems(out_dims)
+                        if isinstance(out_lvl, int) and out_lvl == bw_cache_level:
+                            last_dims = new_operands[-1][0]
+                            extra_words += shape_elems(last_dims)
+                        new_bw += extra_words * self.input_clocks_per_word
 
                     if new_key not in mapping:
-                        mapping[new_key] = [("DBL", i + 1), new_cpu, new_bw]
+                        mapping[new_key] = [("DBL", j), new_cpu, new_bw]
                         heapq.heappush(pq, (new_cpu, new_key))
                     else:
                         cur_times = mapping[new_key]
-                        if isinstance(cur_times[0], str) and len(cur_times) > 2 and not isinstance(cur_times[1], (int, float)):
-                            cur_cpu = cur_times[2]
-                            cur_bw = cur_times[3] if len(cur_times) > 3 else 0
-                        else:
+                        if isinstance(cur_times, list) and len(cur_times) > 1 and isinstance(cur_times[0], tuple):
                             cur_cpu = cur_times[1]
                             cur_bw = cur_times[2] if len(cur_times) > 2 else 0
+                        elif isinstance(cur_times, list) and len(cur_times) > 1 and isinstance(cur_times[0], str):
+                            cur_cpu = cur_times[1]
+                            cur_bw = 0
+                        else:
+                            cur_cpu, cur_bw = 0, 0
                         updated = False
                         if new_cpu < cur_cpu:
                             cur_cpu = new_cpu
@@ -711,8 +733,9 @@ class Bandwidth:
                             cur_bw = new_bw
                             updated = True
                         if updated:
-                            mapping[new_key] = [("DBL", i + 1), cur_cpu, cur_bw]
+                            mapping[new_key] = [("DBL", j), cur_cpu, cur_bw]
                             heapq.heappush(pq, (cur_cpu, new_key))
+                return mapping
             return mapping
 
         out = _dp_expand(out)
