@@ -155,14 +155,21 @@ def run_dynamic(results, node, *tensors, reset_counter=True):
         # Free loaded inputs in child cache
         for i in load_idxs:
             node.parentcache.free(loaded[i])
-        # Validate CPU ops if available: obtain compute node time delta
-        # Find the bottom compute node under this cache
+        # Validate CPU and bandwidth if available
         comp = node.parentcache.parent if hasattr(node, 'parentcache') else None
-        # We can't reliably snapshot before/after here since we may have multiple run_dynamic calls;
-        # rely on aggregate check below if reset_counter was True at top level.
-        if reset_counter and cpu_expected is not None and comp is not None:
-            if comp.time != cpu_expected:
-                raise AssertionError("CPU time mismatch: {} != {}".format(comp.time, cpu_expected))
+        if reset_counter:
+            if cpu_expected is not None and comp is not None:
+                if comp.time != cpu_expected:
+                    raise AssertionError("CPU time mismatch: {} != {}".format(comp.time, cpu_expected))
+            # Bandwidth time expected for this link if provided in entry
+            if isinstance(entry, list) and len(entry) > 2:
+                bw_expected = entry[2]
+                link = getattr(node, 'parent', None)
+                if link is not None and hasattr(link, 'time'):
+                    if link.time != bw_expected:
+                        raise AssertionError(
+                            "Bandwidth time mismatch: {} != {}".format(link.time, bw_expected)
+                        )
         return out_high
     elif algo == "BinOpx":
         # Compute left-associated chain using CPU node and matmulsimple

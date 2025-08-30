@@ -69,6 +69,9 @@ def test_run_dynamic_ldst_two_and_counters():
     # Bandwidth counters: inputs loaded, then output stored
     assert bw.input == A.size() + B.size()
     assert bw.output == out.size()
+    # Verify bw.time matches dynamic result's bw_time for the selected key variant
+    key = ((2, 2), 1, (2, 2), 1, (2, 2), 1)
+    assert results[key][2] == bw.time
 
     # Run again without resetting; counters should accumulate
     out2 = run_dynamic(results, L1, A, B, reset_counter=False)
