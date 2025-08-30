@@ -26,7 +26,7 @@ class TestDynamicTimesEnumeration(unittest.TestCase):
             self.assertEqual(b1, b2)
             self.assertEqual(a, a2)
             self.assertEqual(c, c2)
-            self.assertEqual(v, ["BinOpx", a * b1 * c])
+            self.assertEqual(v, [a * b1 * c])
 
         cases = [
             ((1, 1), 0, (1, 1), 0, (1, 1), 0, 1),
@@ -39,7 +39,7 @@ class TestDynamicTimesEnumeration(unittest.TestCase):
         for ab, l1, bc, l2, ac, l3, prod in cases:
             key = (ab, l1, bc, l2, ac, l3)
             self.assertIn(key, res)
-            self.assertEqual(res[key], ["BinOpx", prod])
+            self.assertEqual(res[key], [prod])
 
 
 if __name__ == "__main__":

@@ -307,7 +307,7 @@ class BinOpx:
                     ops = 0
                     for i in range(1, n_mats):
                         ops += a0 * dims[i] * dims[i + 1]
-                    out[key] = ["BinOpx", ops * self.t]
+                    out[key] = [ops * self.t]
                 return
             # Choose e_idx from 0..remaining and recurse
             for e in range(remaining + 1):
@@ -573,16 +573,22 @@ class Bandwidth:
                 for subset in combinations(candidate_idxs, r):
                     kl = list(key)
                     bw_words = 0
+                    pair_idxs = []
                     for i in subset:
                         kl[i + 1] = prev_level + 1
                         bw_words += shape_elems(kl[i])
+                        pair_idxs.append(i // 2)
                     bw_time = bw_words * self.input_clocks_per_word
                     # Determine CPU time from base value
                     if isinstance(v, list) and v and isinstance(v[0], str):
-                        cpu_time = v[1] if len(v) > 1 else 0
+                        if len(v) > 2 and not isinstance(v[1], (int, float)):
+                            cpu_time = v[2]
+                        else:
+                            cpu_time = v[1] if len(v) > 1 else 0
                     else:
                         cpu_time = v[0] if isinstance(v, list) and len(v) > 0 else 0
-                    out[tuple(kl)] = ["Bandwidth", cpu_time, bw_time]
+                    last_op = ("LDST",) + tuple(pair_idxs)
+                    out[tuple(kl)] = [last_op, cpu_time, bw_time]
 
         # Dynamic programming expansion at the bandwidth level.
         # Use a priority queue ordered by CPU time; while the smallest CPU time
@@ -600,7 +606,12 @@ class Bandwidth:
             for k, times in mapping.items():
                 if not times:
                     continue
-                cpu = times[1] if len(times) > 1 else 0
+                cpu = 0
+                if isinstance(times, list) and times:
+                    if len(times) == 1 and isinstance(times[0], int):
+                        cpu = times[0]
+                    elif isinstance(times[0], tuple) and len(times) > 1:
+                        cpu = times[1]
                 heapq.heappush(pq, (cpu, k))
 
             def _split_key(k):
@@ -667,7 +678,11 @@ class Bandwidth:
                     new_ops = _ops_for_operands(new_operands)
                     if old_ops == 0:
                         continue
-                    cur_cpu_for_key = mapping[key][1]
+                    cur_times = mapping[key]
+                    if isinstance(cur_times[0], str) and len(cur_times) > 2 and not isinstance(cur_times[1], (int, float)):
+                        cur_cpu_for_key = cur_times[2]
+                    else:
+                        cur_cpu_for_key = cur_times[1]
                     new_cpu = int(cur_cpu_for_key * new_ops / old_ops)
                     if new_cpu > max_cpu_time:
                         continue
@@ -676,11 +691,16 @@ class Bandwidth:
                     new_bw = _bw_time_for_key(new_key)
 
                     if new_key not in mapping:
-                        mapping[new_key] = ["Bandwidth", new_cpu, new_bw]
+                        mapping[new_key] = [("DBL", i + 1), new_cpu, new_bw]
                         heapq.heappush(pq, (new_cpu, new_key))
                     else:
-                        cur_cpu = mapping[new_key][1]
-                        cur_bw = mapping[new_key][2] if len(mapping[new_key]) > 2 else 0
+                        cur_times = mapping[new_key]
+                        if isinstance(cur_times[0], str) and len(cur_times) > 2 and not isinstance(cur_times[1], (int, float)):
+                            cur_cpu = cur_times[2]
+                            cur_bw = cur_times[3] if len(cur_times) > 3 else 0
+                        else:
+                            cur_cpu = cur_times[1]
+                            cur_bw = cur_times[2] if len(cur_times) > 2 else 0
                         updated = False
                         if new_cpu < cur_cpu:
                             cur_cpu = new_cpu
@@ -689,7 +709,7 @@ class Bandwidth:
                             cur_bw = new_bw
                             updated = True
                         if updated:
-                            mapping[new_key] = ["Bandwidth", cur_cpu, cur_bw]
+                            mapping[new_key] = [("DBL", i + 1), cur_cpu, cur_bw]
                             heapq.heappush(pq, (cur_cpu, new_key))
             return mapping
 

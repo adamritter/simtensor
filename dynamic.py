@@ -8,21 +8,23 @@ from simulate import muladd
 
 def pp(results):
     for k, v in results.items():
-        tag = None
         cpu = 0
         bw_time = 0
         if isinstance(v, list) and v:
-            if isinstance(v[0], str):
-                tag = v[0]
-                cpu = v[1] if len(v) > 1 else 0
+            # New formats:
+            # - BinOpx: [cpu]
+            # - Bandwidth: [(op,...), cpu, bw]
+            if len(v) == 1 and isinstance(v[0], int):
+                cpu = v[0]
+            elif isinstance(v[0], tuple):
+                cpu = v[1]
                 bw_time = v[2] if len(v) > 2 else 0
             else:
-                # Backward compatibility: [cpu, bw]
+                # Back-compat: [cpu, bw]
                 cpu = v[0]
                 bw_time = v[1] if len(v) > 1 else 0
         util = 0.0 if (cpu == 0 and bw_time == 0) else (cpu / max(cpu, bw_time))
-        prefix = f"[{tag}] " if tag else ""
-        print(f"{prefix}{k}: {v} | util={util:.3f}")
+        print(f"{k}: {v} | util={util:.3f}")
 
 
 if __name__ == "__main__":
