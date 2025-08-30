@@ -43,3 +43,36 @@ def test_run_dynamic_no_match_raises():
     B = Tensor.zeros(3, 3, level=0)
     with pytest.raises(KeyError):
         run_dynamic(results, node, A, B)
+
+
+def test_run_dynamic_ldst_two_and_counters():
+    # Build a two-level hierarchy: L1 --bw--> L0 --op
+    node = BinOpx([], 0, [], 0, [], 0, muladdsimple, 1)
+    # Small L0 so only small shapes pass capacity filter
+    from simulator import Cache, Bandwidth
+    L0 = Cache(24, node)
+    bw = Bandwidth(L0)
+    L1 = Cache(1000, bw)
+
+    # Generate dynamic results at the bandwidth link
+    results = bw.dynamic_times(2, 4096)
+
+    # Pick shapes that fit in L0 together with output: 2x2 @ 2x2 -> 2x2
+    A = L1.calloc(2, 2)
+    B = L1.calloc(2, 2)
+
+    # Run once with counter reset
+    out = run_dynamic(results, L1, A, B, reset_counter=True)
+    assert out.sz == [2, 2]
+    # CPU ops
+    assert node.time == 2 * 2 * 2
+    # Bandwidth counters: inputs loaded, then output stored
+    assert bw.input == A.size() + B.size()
+    assert bw.output == out.size()
+
+    # Run again without resetting; counters should accumulate
+    out2 = run_dynamic(results, L1, A, B, reset_counter=False)
+    assert out2.sz == [2, 2]
+    assert node.time == 2 * (2 * 2 * 2)
+    assert bw.input == 2 * (A.size() + B.size())
+    assert bw.output == 2 * out.size()
