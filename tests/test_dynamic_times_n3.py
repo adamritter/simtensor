@@ -14,10 +14,14 @@ class TestDynamicTimesThreeMatrices(unittest.TestCase):
         # Now the API interprets first arg as number of matrices (base fixed to 2)
         res = simulate.muladd.dynamic_times(3, 4)
 
-        # limit=4 => k=2 (since 2^2 <= 4 < 2^3). We enumerate exponents e0..e3 with sum<=2
-        # Count of solutions to e0+e1+e2+e3<=2 with nonnegative ints is C(2+4,4)=15
+        # limit=4 => k=2 (since 2^2 <= 4 < 2^3).
+        # Now dynamic_times includes all smaller chain sizes down to 2 matrices.
+        # Counts:
+        #  - 3 matrices (e0..e3): C(2+4,4) = 15
+        #  - 2 matrices (e0..e2): C(2+3,3) = 10
+        # Total = 25
         self.assertIsInstance(res, dict)
-        self.assertEqual(len(res), 15)
+        self.assertEqual(len(res), 25)
 
         # Pick a few sequences and verify keys and CPU time (left-associated):
         # dims (1,2,1,1): ops = 1*2*1 + 1*1*1 = 2 + 1 = 3
@@ -35,6 +39,10 @@ class TestDynamicTimesThreeMatrices(unittest.TestCase):
         self.assertIn(key3, res)
         self.assertEqual(res[key3], [6])
 
+        # Include at least one 2-matrix chain entry, e.g., dims (2,2,1)
+        key2m = ((2, 2), 0, (2, 1), 0, (2, 1), 0)
+        self.assertIn(key2m, res)
+        self.assertEqual(res[key2m], [4])
 
 if __name__ == "__main__":
     unittest.main()

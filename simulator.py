@@ -226,7 +226,11 @@ class BinOpx:
         # Mode 2: (n_mats, limit) enumeration with base fixed at 2
         if len(args) == 2 and all(isinstance(x, int) for x in args):
             n_mats, limit = args
-            return self.enumerate_power_chain(n_mats, limit, base=2)
+            out = {}
+            start = 2 if n_mats >= 2 else n_mats
+            for m in range(start, n_mats + 1):
+                out.update(self.enumerate_power_chain(m, limit, base=2))
+            return out
 
         # Mode 1: original list-of-chains interface
         if len(args) != 1:
