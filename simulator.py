@@ -557,7 +557,7 @@ class Bandwidth:
         for key, v in base.items():
             base_key = tuple(key)
             cpu = v[1] if isinstance(v, list) and len(v) > 1 else 0
-            out[base_key] = ["Bandwidth", cpu, 0]
+            out[base_key] = v
             if len(key) % 2 != 0:
                 # Unexpected; skip duplication
                 continue
@@ -577,7 +577,12 @@ class Bandwidth:
                         kl[i + 1] = prev_level + 1
                         bw_words += shape_elems(kl[i])
                     bw_time = bw_words * self.input_clocks_per_word
-                    out[tuple(kl)] = ["Bandwidth", cpu, bw_time]
+                    # Determine CPU time from base value
+                    if isinstance(v, list) and v and isinstance(v[0], str):
+                        cpu_time = v[1] if len(v) > 1 else 0
+                    else:
+                        cpu_time = v[0] if isinstance(v, list) and len(v) > 0 else 0
+                    out[tuple(kl)] = ["Bandwidth", cpu_time, bw_time]
 
         # Dynamic programming expansion at the bandwidth level.
         # Use a priority queue ordered by CPU time; while the smallest CPU time

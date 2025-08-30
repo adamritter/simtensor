@@ -18,7 +18,7 @@ class TestBandwidthDynamicTimes(unittest.TestCase):
         # Base key (all level 0) for a=2, b=2, c=1
         base_key = ((2, 2), 0, (2, 1), 0, (2, 1), 0)
         self.assertIn(base_key, res)
-        self.assertEqual(res[base_key], ["Bandwidth", 4, 0])
+        self.assertEqual(res[base_key], ["BinOpx", 4])
 
         # Duplicate with only ab at level 1 -> bandwidth time = a*b = 4
         ab_L1 = ((2, 2), 1, (2, 1), 0, (2, 1), 0)

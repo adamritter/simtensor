@@ -23,7 +23,7 @@ class TestCacheDynamicTimesCapacity(unittest.TestCase):
         # Base shapes to look for: a=2, b=2, c=1
         base = ((2, 2), 0, (2, 1), 0, (2, 1), 0)
         self.assertIn(base, res)
-        self.assertEqual(res[base], ["Bandwidth", 4, 0])
+        self.assertEqual(res[base], ["BinOpx", 4])
 
         # Accept single promotion that fits: ab (4 elements) at level 1
         ab_L1 = ((2, 2), 1, (2, 1), 0, (2, 1), 0)
