@@ -22,11 +22,13 @@ class TestCacheDynamicTimesCapacity(unittest.TestCase):
 
         # Base shapes to look for: a=2, b=2, c=1
         base = ((2, 2), 0, (2, 1), 0, (2, 1), 0)
-        self.assertIn(base, res)  # Bandwidth adds [cpu, bw], Cache keeps it
+        self.assertIn(base, res)
+        self.assertEqual(res[base], ["Bandwidth", 4, 0])
 
         # Accept single promotion that fits: ab (4 elements) at level 1
         ab_L1 = ((2, 2), 1, (2, 1), 0, (2, 1), 0)
         self.assertIn(ab_L1, res)
+        self.assertEqual(res[ab_L1], ["Bandwidth", 4, 4])
 
         # Reject combined promotions that exceed L1.size: ab (4) + bc (2) = 6
         ab_bc_L1 = ((2, 2), 1, (2, 1), 1, (2, 1), 0)
@@ -35,6 +37,7 @@ class TestCacheDynamicTimesCapacity(unittest.TestCase):
         # Combinations that sum to <= 5 should be kept, e.g., bc (2) + out (2) = 4
         bc_out_L1 = ((2, 2), 0, (2, 1), 1, (2, 1), 1)
         self.assertIn(bc_out_L1, res)
+        self.assertEqual(res[bc_out_L1], ["Bandwidth", 4, 4])
 
 
 if __name__ == "__main__":
