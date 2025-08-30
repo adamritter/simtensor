@@ -11,16 +11,16 @@ def pp(results):
         cpu = 0
         bw_time = 0
         if isinstance(v, list) and v:
-            # New formats:
-            # - BinOpx: [cpu]
+            # Formats:
+            # - BinOpx: ["BinOpx", cpu]
             # - Bandwidth: [(op,...), cpu, bw]
-            if len(v) == 1 and isinstance(v[0], int):
-                cpu = v[0]
+            # - Back-compat: [cpu, bw]
+            if isinstance(v[0], str):
+                cpu = v[1] if len(v) > 1 else 0
             elif isinstance(v[0], tuple):
                 cpu = v[1]
                 bw_time = v[2] if len(v) > 2 else 0
             else:
-                # Back-compat: [cpu, bw]
                 cpu = v[0]
                 bw_time = v[1] if len(v) > 1 else 0
         util = 0.0 if (cpu == 0 and bw_time == 0) else (cpu / max(cpu, bw_time))

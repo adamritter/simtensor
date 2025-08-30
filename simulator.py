@@ -307,7 +307,7 @@ class BinOpx:
                     ops = 0
                     for i in range(1, n_mats):
                         ops += a0 * dims[i] * dims[i + 1]
-                    out[key] = [ops * self.t]
+                    out[key] = ["BinOpx", ops * self.t]
                 return
             # Choose e_idx from 0..remaining and recurse
             for e in range(remaining + 1):
@@ -611,6 +611,8 @@ class Bandwidth:
                     if len(times) == 1 and isinstance(times[0], int):
                         cpu = times[0]
                     elif isinstance(times[0], tuple) and len(times) > 1:
+                        cpu = times[1]
+                    elif isinstance(times[0], str) and len(times) > 1:
                         cpu = times[1]
                 heapq.heappush(pq, (cpu, k))
 

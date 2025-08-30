@@ -27,22 +27,22 @@ class TestDynamicTimesThreeMatrices(unittest.TestCase):
         # dims (1,2,1,1): ops = 1*2*1 + 1*1*1 = 2 + 1 = 3
         key1 = ((1, 2), 0, (2, 1), 0, (1, 1), 0, (1, 1), 0)
         self.assertIn(key1, res)
-        self.assertEqual(res[key1], [3])
+        self.assertEqual(res[key1], ["BinOpx", 3])
 
         # dims (2,2,1,1): ops = 2*2*1 + 2*1*1 = 4 + 2 = 6
         key2 = ((2, 2), 0, (2, 1), 0, (1, 1), 0, (2, 1), 0)
         self.assertIn(key2, res)
-        self.assertEqual(res[key2], [6])
+        self.assertEqual(res[key2], ["BinOpx", 6])
 
         # dims (1,1,2,2): ops = 1*1*2 + 1*2*2 = 2 + 4 = 6
         key3 = ((1, 1), 0, (1, 2), 0, (2, 2), 0, (1, 2), 0)
         self.assertIn(key3, res)
-        self.assertEqual(res[key3], [6])
+        self.assertEqual(res[key3], ["BinOpx", 6])
 
         # Include at least one 2-matrix chain entry, e.g., dims (2,2,1)
         key2m = ((2, 2), 0, (2, 1), 0, (2, 1), 0)
         self.assertIn(key2m, res)
-        self.assertEqual(res[key2m], [4])
+        self.assertEqual(res[key2m], ["BinOpx", 4])
 
 if __name__ == "__main__":
     unittest.main()
