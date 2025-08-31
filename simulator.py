@@ -671,7 +671,16 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
                 extra += self._shape_elems(last_dims)
             new_bw += extra * self.input_clocks_per_word
 
-            tag = 1 if (len(new_ops_list) >= 2 and (j == 0 or j == n)) else j
+            # Encode the expansion position in the tag used for previous_key.
+            # Use boundary tags 0 (left) and n (right) instead of the
+            # ambiguous sentinel so that previous_key can deterministically
+            # reverse the transformation.
+            if j == 0:
+                tag = 0
+            elif j == n:
+                tag = n
+            else:
+                tag = j
             # Build full bandwidth list by preserving existing bws for outer
             # links (times[2:]) and replacing this link's bw (last element).
             prev_bws = times[2:] if len(times) > 2 else []
