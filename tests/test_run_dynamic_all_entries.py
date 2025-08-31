@@ -8,7 +8,7 @@ if ROOT not in sys.path:
 
 import simulate
 from simulator import Tensor, Cache, Bandwidth
-from dynamic import run_dynamic, pp
+from dynamic import run_dynamic, pp, previous_key
 
 
 def verify_result(key, results):
@@ -23,6 +23,16 @@ def verify_result(key, results):
     out = run_dynamic(results, simulate.muladd, *tensors)
     # Output shape should match trailing dims in the key
     assert out.sz == [out_dims[0], out_dims[1]]
+
+    # Additionally verify that for all non-BinOpx rows, the previous_key exists.
+    v = results.get(key)
+    if isinstance(v, list) and v:
+        head = v[0]
+        # Skip pure compute rows
+        if not (isinstance(head, str) and head == 'BinOpx'):
+            op = head if isinstance(head, tuple) else None
+            pk = previous_key(key, op)
+            assert pk in results, f"previous_key missing for {key} with op {head} -> {pk}"
 
 
 def verify_reults(results):
