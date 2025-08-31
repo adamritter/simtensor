@@ -585,10 +585,10 @@ bw_time independently. If `new_key` is not present, inserts it."""
             mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
             return
         cur = mapping[new_key]
-        cur_bw2 = cur[2] if len(cur) > 2 else 0
+        cur_bws = cur[2:] 
         if new_cpu != cur[1]:
-            raise Exception("new_cpu != cur_cpu2")
-        if new_bw < cur_bw2:
+            raise Exception("new_cpu != cur_cpu")
+        if new_bw < max(cur_bws + [0]):
             mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
 
     def _dp_expand_key(self, key, times, mapping, level_here, max_cpu_time):
