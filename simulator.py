@@ -580,7 +580,7 @@ class Bandwidth:
                         pair_idxs.append(i // 2)
                     bw_time = bw_words * self.input_clocks_per_word
                     last_op = ("LDST",) + tuple(pair_idxs)
-                    out[tuple(kl)] = [last_op] + v[1:] +[bw_time]
+                    out[tuple(kl)] = [last_op] + v[1:] + [bw_time]
 
         # Dynamic programming expansion at the bandwidth level.
         # Use a priority queue ordered by CPU time; while the smallest CPU time
