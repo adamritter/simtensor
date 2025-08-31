@@ -143,7 +143,12 @@ def run_dynamic(results, node, *tensors, reset_counter=True, accumulate_output=N
             if words > peak_extra:
                 peak_extra = words
         # Build: BinOpx (node) <- Cache(low) <- Bandwidth <- Cache(high)
-        low_cache = Cache(max(1, low_words + peak_extra), node)
+        # Intermediate allocation can temporarily require holding two
+        # intermediates at once (previous out_low and newly allocated nxt)
+        # in addition to any loaded inputs. Reserve headroom for up to two
+        # such matrices using the largest shape observed to avoid transient
+        # overcommit during chained multiplies.
+        low_cache = Cache(max(1, low_words + 2 * peak_extra), node)
         bw_link = Bandwidth(low_cache)
         high_cache = Cache(max(1, max(high_words, low_words)), bw_link)
         exec_node = high_cache
