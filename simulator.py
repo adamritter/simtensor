@@ -611,13 +611,6 @@ class Bandwidth:
                     total += a0 * ops[i][0][1] * ops[i + 1][0][1]
                 return total
 
-            def cpu_for(times):
-                if isinstance(times, list) and len(times) > 1:
-                    tag = times[0]
-                    if isinstance(tag, (tuple, str)):
-                        return times[1]
-                return 0
-
             def bw_time_for(k):
                 ops, outp = split_key(k)
                 words = 0
@@ -634,7 +627,7 @@ class Bandwidth:
                 old_ops = ops_count(ops)
                 if old_ops == 0:
                     continue
-                cur_cpu = cpu_for(times)
+                cur_cpu = times[1]
                 n = len(ops)
                 for j in range(n + 1):
                     new_ops_list = list(ops)
