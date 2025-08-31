@@ -579,9 +579,8 @@ class Bandwidth:
                         bw_words += shape_elems(kl[i])
                         pair_idxs.append(i // 2)
                     bw_time = bw_words * self.input_clocks_per_word
-                    cpu_time = v[1]
                     last_op = ("LDST",) + tuple(pair_idxs)
-                    out[tuple(kl)] = [last_op, cpu_time, bw_time]
+                    out[tuple(kl)] = [last_op] + v[1:] +[bw_time]
 
         # Dynamic programming expansion at the bandwidth level.
         # Use a priority queue ordered by CPU time; while the smallest CPU time
