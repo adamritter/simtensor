@@ -197,9 +197,29 @@ def run_dynamic(results, node, *tensors, reset_counter=True, accumulate_output=N
     if algo == "BinOpx":
         out = _run_dynamic_binopx(exec_node, tensors, accumulate_output)
     elif algo == "LDST":
-        out = _run_dynamic_ldst(exec_node, tensors, accumulate_output, bw_op, out_level_marker)
+        out = _run_dynamic_ldst(
+            exec_node,
+            tensors,
+            accumulate_output,
+            bw_op,
+            out_level_marker,
+            key=key,
+            results=results,
+        )
     elif algo == "DBL":
-        out = _run_dynamic_dbl(exec_node, tensors, accumulate_output, out_level_marker)
+        # Pass through the matched key and op tag so the DBL runner can use
+        # previous_key to recover the predecessor entry and slice tensors
+        # correctly. Also pass the full results map so recursive calls can
+        # resolve the predecessor algorithm.
+        out = _run_dynamic_dbl(
+            exec_node,
+            tensors,
+            accumulate_output,
+            out_level_marker,
+            key,
+            bw_op,
+            results,
+        )
     else:
         raise NotImplementedError("Unsupported dynamic entry type: {}".format(algo))
 
@@ -229,8 +249,33 @@ def run_dynamic(results, node, *tensors, reset_counter=True, accumulate_output=N
 
 
 def _run_dynamic_binopx(node, tensors, accumulate_output):
-    # Compute left-associated chain using CPU node and matmulsimple
-    clevel = getattr(node, "clevel", 0)
+    # Compute left-associated chain using a single loop of matmulsimple calls
+    # Supports being invoked with either a compute BinOpx or a Cache sitting
+    # above a BinOpx. In the latter case, allocate intermediates in the child
+    # cache and call matmulsimple on the compute node.
+    if isinstance(node, Cache):
+        # Two cases:
+        # 1) node.parent is Bandwidth -> compute BinOpx is node.parentcache.parent
+        # 2) node.parent is BinOpx     -> compute BinOpx is node.parent
+        if hasattr(node, 'parentcache') and node.parentcache is not None:
+            comp_cache = node.parentcache
+            if not hasattr(comp_cache, 'parent'):
+                raise RuntimeError("Cannot locate compute node under cache for BinOpx execution")
+            comp_node = comp_cache.parent
+            cache_for_alloc = comp_cache
+        else:
+            # Directly above the compute node
+            if not hasattr(node, 'parent'):
+                raise RuntimeError("Cannot locate compute node under cache for BinOpx execution")
+            comp_node = node.parent
+            cache_for_alloc = node
+        clevel = getattr(comp_node, "clevel", 0)
+        alloc_fn = lambda r, c: cache_for_alloc.calloc(r, c)
+    else:
+        comp_node = node
+        clevel = getattr(node, "clevel", 0)
+        alloc_fn = lambda r, c: Tensor.zeros(r, c, level=clevel)
+
     n_mats = len(tensors)
     if accumulate_output is not None:
         if accumulate_output.sz != [tensors[0].sz[0], tensors[-1].sz[1]]:
@@ -238,50 +283,46 @@ def _run_dynamic_binopx(node, tensors, accumulate_output):
         if getattr(accumulate_output, 'level', clevel) != clevel:
             raise ValueError("accumulate_output must reside at CPU level {}".format(clevel))
 
-    if n_mats == 2:
-        out = accumulate_output if accumulate_output is not None else Tensor.zeros(
-            tensors[0].sz[0], tensors[1].sz[1], level=clevel
-        )
-        matmulsimple(node, tensors[0], tensors[1], out)
-    else:
-        # Build intermediates until the last multiply; then write into final dest
-        temp = Tensor.zeros(tensors[0].sz[0], tensors[1].sz[1], level=clevel)
-        matmulsimple(node, tensors[0], tensors[1], temp)
-        for t in tensors[2:-1]:
-            nxt = Tensor.zeros(temp.sz[0], t.sz[1], level=clevel)
-            matmulsimple(node, temp, t, nxt)
-            temp = nxt
-        last = tensors[-1]
-        if accumulate_output is not None:
-            out = accumulate_output
-            matmulsimple(node, temp, last, out)
+    left = tensors[0]
+    out = None
+    for i in range(1, n_mats):
+        right = tensors[i]
+        is_last = (i == n_mats - 1)
+        if is_last and accumulate_output is not None:
+            dest = accumulate_output
         else:
-            out = Tensor.zeros(temp.sz[0], last.sz[1], level=clevel)
-            matmulsimple(node, temp, last, out)
+            dest = alloc_fn(left.sz[0], right.sz[1])
+        if is_last:
+            out = dest
+        matmulsimple(comp_node, left, right, dest)
+        left = dest
+
     return out
 
 
-def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=None):
+def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=None, key=None, results=None):
+    """Execute one LDST step by loading listed operands, then running the
+    predecessor dynamic entry using run_dynamic. This avoids re-implementing
+    the matmul here and ensures consistent accounting.
+    """
     if not isinstance(node, Cache):
         raise TypeError("LDST execution requires a Cache node for load/store")
+
+    # Determine which operands to load at this step
     out_pos = len(tensors)
     idxs = list(bw_op[1:]) if bw_op and len(bw_op) > 1 else []
-    loaded = {}
     load_idxs = [i for i in idxs if i < out_pos]
-    # Ensure tensors are resident in the high-level cache before loading down
+
+    # Load selected operands down one level
+    loaded = {}
     for i in load_idxs:
         try:
             node.alloc(tensors[i])
         except Exception:
             pass
         loaded[i] = node.load(tensors[i])
-    rec_args = [loaded.get(i, tensors[i]) for i in range(len(tensors))]
-    comp_cache = getattr(node, 'parentcache', None)
-    if comp_cache is None or not hasattr(comp_cache, 'parent'):
-        raise RuntimeError("Cannot locate compute node under cache for LDST execution")
-    comp_node = comp_cache.parent  # BinOpx
 
-    # If accumulation is requested, bring the destination down to the compute cache
+    # If accumulation is requested, load the destination as well
     loaded_out = None
     if accumulate_output is not None:
         try:
@@ -290,69 +331,68 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=
             pass
         loaded_out = node.load(accumulate_output)
 
-    # Perform the chain multiply at the compute cache level. For chains with
-    # more than 2 matrices, we must allocate intermediates that match the
-    # current right-hand matrix width; only the final multiply may target the
-    # accumulation buffer (if provided).
-    n_mats = len(rec_args)
-    if n_mats < 2:
-        raise ValueError("LDST execution requires at least two operands")
+    # Build argument list for the predecessor run: use loaded views where
+    # applicable so the next dynamic step sees reduced levels.
+    rec_args = [loaded.get(i, tensors[i]) for i in range(len(tensors))]
 
-    if n_mats == 2:
-        # Simple A @ B -> out
-        if accumulate_output is not None and loaded_out is not None:
-            out_low = loaded_out
-        else:
-            out_low = comp_cache.calloc(rec_args[0].sz[0], rec_args[1].sz[1])
-        matmulsimple(comp_node, rec_args[0], rec_args[1], out_low)
-    else:
-        # Start with an intermediate matching A @ B shape
-        out_low = comp_cache.calloc(rec_args[0].sz[0], rec_args[1].sz[1])
-        matmulsimple(comp_node, rec_args[0], rec_args[1], out_low)
-        # Multiply through the middle of the chain
-        for t in rec_args[2:-1]:
-            nxt = comp_cache.calloc(out_low.sz[0], t.sz[1])
-            matmulsimple(comp_node, out_low, t, nxt)
-            comp_cache.free(out_low)
-            out_low = nxt
-        # Final multiply: write into accumulation buffer if provided
-        last = rec_args[-1]
-        if accumulate_output is not None and loaded_out is not None:
-            matmulsimple(comp_node, out_low, last, loaded_out)
-            comp_cache.free(out_low)
-            out_low = loaded_out
-        else:
-            nxt = comp_cache.calloc(out_low.sz[0], last.sz[1])
-            matmulsimple(comp_node, out_low, last, nxt)
-            comp_cache.free(out_low)
-            out_low = nxt
-    # Store result back to this cache conditionally based on desired output level
-    out_rows, out_cols = out_low.sz
-    target_high = True
+    # Compute predecessor key and delegate to run_dynamic without resetting
+    # counters so bandwidth inputs accumulate across LDST steps.
+    if key is None:
+        # Reconstruct best-effort key from current tensors and node
+        dims = [tensors[0].sz[0], tensors[0].sz[1]]
+        for t in tensors[1:]:
+            dims.append(t.sz[1])
+        out_level = getattr(node, 'level', 0)
+        flat = []
+        for i in range(len(dims) - 1):
+            flat.extend([(dims[i], dims[i + 1]), getattr(tensors[i], 'level', 0)])
+        flat.extend([(dims[0], dims[-1]), out_level])
+        key = tuple(flat)
+
+    prev = previous_key(key, bw_op)
+
+    # The results table is required to resolve the predecessor algorithm
+    if results is None:
+        raise ValueError("_run_dynamic_ldst requires results mapping for recursion")
+
+    out_low = run_dynamic(
+        results,
+        node.parentcache,
+        *rec_args,
+        reset_counter=False,
+        accumulate_output=loaded_out,
+    )
+
+    # If the dynamic key expects the output to reside at this (high) cache
+    # level, commit the low-level result back up. This accounts for the
+    # bandwidth time associated with writing the output across the link.
+    target_high = False
     if out_level_marker is not None:
         target_high = isinstance(out_level_marker, int) and out_level_marker == getattr(node, 'level', 0)
+    out_view = out_low
     if target_high:
+        # Choose destination view: either reuse the provided high-level output
+        # or allocate a fresh one.
         if accumulate_output is None:
-            out_high = node.calloc(out_rows, out_cols)
-            node.store_to(out_low, out_high)
+            out_high = node.calloc(out_low.sz[0], out_low.sz[1])
         else:
             out_high = accumulate_output
-            node.store_to(out_low, out_high)
-    else:
-        # Keep the result at the lower level; do not traverse the link for output
-        out_high = out_low
-    # Free loaded inputs in child cache.
-    # If we were accumulating into an existing output, keep one input resident
-    # at the compute cache to enable partial reuse on a subsequent call where
-    # counters continue accumulating (matches test expectations).
-    # Always free loaded inputs from the child cache
+        node.store_to(out_low, out_high)
+        out_view = out_high
+
+    # Free loaded inputs in the child cache to keep capacity bounded
     for i in load_idxs:
-        node.parentcache.free(loaded[i])
-    # Track whether we paid an extra output load for accumulation to adjust counters on the next run
+        try:
+            node.parentcache.free(loaded[i])
+        except Exception:
+            pass
+
+    # Track whether we loaded the output for accumulation to let outer wrapper
+    # adjust counters on subsequent non-accumulate calls
     link = getattr(node, 'parent', None)
     if accumulate_output is not None and link is not None:
         try:
-            setattr(link, '_last_output_load_words', out_high.size())
+            setattr(link, '_last_output_load_words', (accumulate_output.sz[0] * accumulate_output.sz[1]))
         except Exception:
             pass
     elif link is not None:
@@ -360,55 +400,121 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=
             setattr(link, '_last_output_load_words', 0)
         except Exception:
             pass
-    return out_high
+
+    return out_view
 
 
-def _run_dynamic_dbl(node, tensors, accumulate_output, out_level_marker=None):
-    """Execute a matmul chain using the DBL dynamic expansion.
-    
-    DBL is a higher-level dynamic-programming variant that conceptually doubles
-    a shared dimension when adjacent operands reside at this bandwidth level.
-    At execution time, we run it as an LDST with the appropriate operand set
-    and then account for the extra transfer implied by the expansion so that
-    bandwidth-time validation matches the dynamic table.
-    
-    Args:
-        node: the higher cache level (simulator.Cache) above a Bandwidth link
-        tensors: list[Tensor] input matrices resident at `node`
-        accumulate_output: optional Tensor at `node` to accumulate into
-        out_level_marker: output level marker from the dynamic key
-    
-    Returns:
-        Tensor: the result view, same semantics as _run_dynamic_ldst."""
+def _run_dynamic_dbl(node, tensors, accumulate_output, out_level_marker=None, key=None, dbl_op=None, results=None):
+    """Execute DBL by splitting into two predecessor runs.
+
+    Strategy:
+    - Use previous_key(current_key, ("DBL", j)) to obtain the predecessor key.
+    - Slice the operand tensors into two halves corresponding to the DBL
+      expansion position j.
+    - Call run_dynamic twice on the predecessor problem:
+        * boundary j in {0, n}: write into disjoint output slices (no accumulate)
+        * interior 0 < j < n: second call uses accumulation into the same dst
+    - Both internal calls run with reset_counter=False so that outer verification
+      checks the aggregate CPU/BW against the DBL entry.
+    """
     if not isinstance(node, Cache):
         raise TypeError("DBL execution requires a Cache node for load/store")
-    cur_level = getattr(node, 'level', 0)
-    idxs = [i for i in range(len(tensors)) if getattr(tensors[i], 'level', 0) == cur_level]
-    bw_op = tuple(["LDST"] + idxs)
-    out = _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker)
-    # Account for the extra transfer implied by DBL dynamic expansion to match
-    # expected bandwidth time accounting in Bandwidth.dynamic_times.
-    try:
-        link = getattr(node, 'parent', None)
-        if link is not None and hasattr(link, 'input') and hasattr(link, '_update_time'):
-            out_dims = (tensors[0].sz[0], tensors[-1].sz[1])
-            extra_words = 0
-            if out_level_marker is None:
-                out_level_marker = 0
-            if not isinstance(out_level_marker, int) or out_level_marker != cur_level:
-                # Output is not at this link level: pay extra for the output words (avoid scalar case)
-                if out_dims[1] > 1:
-                    extra_words += out_dims[0] * out_dims[1]
-            else:
-                # Output is at this link level: the last matrix participates in the extra phase
-                last_dims = (tensors[-1].sz[0], tensors[-1].sz[1])
-                extra_words += last_dims[0] * last_dims[1]
-            if extra_words > 0:
-                link.input += extra_words
-                link._update_time()
-    except Exception:
-        pass
-    return out
+    if not isinstance(dbl_op, tuple) or len(dbl_op) < 2 or dbl_op[0] != "DBL":
+        raise ValueError("_run_dynamic_dbl requires dbl_op ('DBL', j)")
+    # Build the current key if not provided; rely on operand/output levels.
+    if key is None:
+        dims = [tensors[0].sz[0], tensors[0].sz[1]]
+        for t in tensors[1:]:
+            dims.append(t.sz[1])
+        out_level = getattr(node, 'level', 0)
+        flat = []
+        for i in range(len(dims) - 1):
+            flat.extend([(dims[i], dims[i + 1]), getattr(tensors[i], 'level', 0)])
+        flat.extend([(dims[0], dims[-1]), out_level])
+        key = tuple(flat)
+
+    # Compute predecessor key using the provided tag
+    prev = previous_key(key, dbl_op)
+    # Determine split position and sizes from prev key shapes
+    pairs_prev = [(prev[i], prev[i + 1]) for i in range(0, len(prev), 2)]
+    ops_prev = pairs_prev[:-1]
+    n = len(ops_prev)
+    j = int(dbl_op[1])
+    # Convenience: output shape
+    out_rows = tensors[0].sz[0]
+    out_cols = tensors[-1].sz[1]
+
+    # Prepare the destination buffer at the target high level
+    if accumulate_output is not None:
+        base_out = accumulate_output
+    else:
+        base_out = node.calloc(out_rows, out_cols)
+
+    # Helper to run one half with a chosen set of operands and an output view
+    def run_half(ops_list, out_view, use_accumulate):
+        # Ensure the out_view resides in the high-level cache
+        if use_accumulate:
+            return run_dynamic(
+                results,
+                node,
+                *ops_list,
+                reset_counter=False,
+                accumulate_output=out_view,
+            )
+        tmp = run_dynamic(
+            results,
+            node,
+            *ops_list,
+            reset_counter=False,
+            accumulate_output=None,
+        )
+        if tmp.sz != out_view.sz:
+            raise ValueError("Mismatched temporary output shape during DBL run")
+        for i in range(tmp.sz[0]):
+            for j2 in range(tmp.sz[1]):
+                out_view[i, j2] = tmp[i][j2].value if tmp[i][j2].sz == [] else tmp[i][j2]
+        return out_view
+
+    # Build operand lists for both halves
+    ops1 = list(tensors)
+    ops2 = list(tensors)
+
+    if j == 0:
+        # Split first matrix rows: top and bottom halves write into disjoint row blocks
+        half = ops_prev[0][0][0]  # rows of first op in predecessor
+        a0 = tensors[0]
+        ops1[0] = a0[0:half, :]
+        ops2[0] = a0[half:half * 2, :]
+        # Outputs: first half rows and second half rows
+        out1 = base_out[0:half, :]
+        out2 = base_out[half:half * 2, :]
+        run_half(ops1, out1, use_accumulate=False)
+        run_half(ops2, out2, use_accumulate=False)
+    elif j == n:
+        # Split last matrix columns: left and right column blocks
+        half = ops_prev[-1][0][1]  # cols of last op in predecessor
+        bl = tensors[-1]
+        ops1[-1] = bl[:, 0:half]
+        ops2[-1] = bl[:, half:half * 2]
+        out1 = base_out[:, 0:half]
+        out2 = base_out[:, half:half * 2]
+        run_half(ops1, out1, use_accumulate=False)
+        run_half(ops2, out2, use_accumulate=False)
+    else:
+        # Interior split on the shared dimension between ops[j-1] and ops[j]
+        half = ops_prev[j - 1][0][1]  # shared K in predecessor
+        left = tensors[j - 1]
+        right = tensors[j]
+        ops1[j - 1] = left[:, 0:half]
+        ops1[j] = right[0:half, :]
+        ops2[j - 1] = left[:, half:half * 2]
+        ops2[j] = right[half:half * 2, :]
+        # Both halves produce the full output; accumulate on the second
+        out_full = base_out
+        run_half(ops1, out_full, use_accumulate=False)
+        run_half(ops2, out_full, use_accumulate=True)
+
+    return base_out
 
 def previous_key(key, op=None):
     """Return the logical previous key for a dynamic-programming entry.
@@ -549,7 +655,7 @@ def pp(results):
         if extra is None:
             print(f"{k}: {v} | util={util:.3f}")
         else:
-            print(f"{k}: {v} | util={util:.3f} | extras={extra}")
+            print(f"{k}: {v} | util={util:.3f} | extras={extra}")                   
 
 
 
