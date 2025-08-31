@@ -53,3 +53,13 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
     assert len(results) == 653
 
     verify_reults(results)
+
+
+def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth2():
+    # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
+    bw2 = Bandwidth(Cache(20, Bandwidth(Cache(12, simulate.muladd))))
+    results = bw2.dynamic_times(3, 20)
+    #assert len(results) == 4394
+    pp(results)
+
+    verify_reults(results)
