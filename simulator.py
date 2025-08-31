@@ -589,143 +589,123 @@ class Bandwidth:
         # cache level. Update times if improved and push new keys if added.
         def _dp_expand(mapping):
             max_cpu_time = max_cpu
-            bw_cache_level = prev_level + 1
+            level_here = prev_level + 1
 
-            # Priority queue by current cpu time
-            pq = []
-            for k, times in mapping.items():
-                cpu = times[1]
-                heapq.heappush(pq, (cpu, k))
-
-            def _split_key(k):
+            def split_key(k):
                 pairs = [(k[i], k[i + 1]) for i in range(0, len(k), 2)]
-                operands = pairs[:-1]  # exclude trailing output dims
-                out_pair = pairs[-1]
-                return operands, out_pair
+                return pairs[:-1], pairs[-1]  # operands, out_pair
 
-            def _join_key(operands, out_pair):
+            def join_key(ops, outp):
                 flat = []
-                for shp, lvl in operands:
+                for shp, lvl in ops:
                     flat.extend([shp, lvl])
-                flat.extend([out_pair[0], out_pair[1]])
+                flat.extend([outp[0], outp[1]])
                 return tuple(flat)
 
-            def _ops_for_operands(operands):
-                if len(operands) < 2:
+            def ops_count(ops):
+                if len(ops) < 2:
                     return 0
-                d0 = operands[0][0][0]
-                ops = 0
-                for i in range(len(operands) - 1):
-                    kdim = operands[i][0][1]
-                    mdim = operands[i + 1][0][1]
-                    ops += d0 * kdim * mdim
-                return ops
+                a0 = ops[0][0][0]
+                total = 0
+                for i in range(len(ops) - 1):
+                    total += a0 * ops[i][0][1] * ops[i + 1][0][1]
+                return total
 
-            def _bw_time_for_key(k):
-                # Recompute bandwidth time based on shapes resident at this link's level
-                operands, out_pair = _split_key(k)
+            def cpu_for(times):
+                if isinstance(times, list) and len(times) > 1:
+                    tag = times[0]
+                    if isinstance(tag, (tuple, str)):
+                        return times[1]
+                return 0
+
+            def bw_time_for(k):
+                ops, outp = split_key(k)
                 words = 0
-                for shp, lvl in operands + [out_pair]:
-                    if isinstance(lvl, int) and lvl == bw_cache_level:
+                for shp, lvl in ops + [outp]:
+                    if isinstance(lvl, int) and lvl == level_here:
                         words += shape_elems(shp)
                 return words * self.input_clocks_per_word
 
-            base_items = list(mapping.items())
-            for key, cur_times in base_items:
-                operands, out_pair = _split_key(key)
-                if len(operands) < 2:
+            # Expand only from the snapshot of current entries
+            for key, times in list(mapping.items()):
+                ops, outp = split_key(key)
+                if len(ops) < 2:
                     continue
-                n = len(operands)
+                old_ops = ops_count(ops)
+                if old_ops == 0:
+                    continue
+                cur_cpu = cpu_for(times)
+                n = len(ops)
                 for j in range(n + 1):
-                    # Build new operands/out depending on j
+                    new_ops_list = list(ops)
+                    new_outp = outp
                     if j == 0:
-                        (op0_shp, op0_lvl) = operands[0]
-                        if op0_lvl != bw_cache_level or out_pair[1] != bw_cache_level:
+                        (shp, lvl) = ops[0]
+                        if lvl != level_here or outp[1] != level_here:
                             continue
-                        new_operands = list(operands)
-                        a0, a1 = op0_shp
-                        new_operands[0] = ((a0 * 2, a1), op0_lvl)
-                        out_dims, out_lvl = out_pair
-                        new_out_pair = ((out_dims[0] * 2, out_dims[1]), out_lvl)
+                        a0, a1 = shp
+                        new_ops_list[0] = ((a0 * 2, a1), lvl)
+                        (od, ol) = outp
+                        new_outp = ((od[0] * 2, od[1]), ol)
                     elif j == n:
-                        (last_shp, last_lvl) = operands[-1]
-                        if last_lvl != bw_cache_level or out_pair[1] != bw_cache_level:
+                        (shp, lvl) = ops[-1]
+                        if lvl != level_here or outp[1] != level_here:
                             continue
-                        new_operands = list(operands)
-                        b0, b1 = last_shp
-                        new_operands[-1] = ((b0, b1 * 2), last_lvl)
-                        out_dims, out_lvl = out_pair
-                        new_out_pair = ((out_dims[0], out_dims[1] * 2), out_lvl)
+                        b0, b1 = shp
+                        new_ops_list[-1] = ((b0, b1 * 2), lvl)
+                        (od, ol) = outp
+                        new_outp = ((od[0], od[1] * 2), ol)
                     else:
-                        (a_shp, a_lvl) = operands[j - 1]
-                        (b_shp, b_lvl) = operands[j]
-                        if a_lvl != bw_cache_level or b_lvl != bw_cache_level:
+                        (ashp, alvl) = ops[j - 1]
+                        (bshp, blvl) = ops[j]
+                        if alvl != level_here or blvl != level_here:
                             continue
-                        a0, a1 = a_shp
-                        b0, b1 = b_shp
+                        a0, a1 = ashp
+                        b0, b1 = bshp
                         if a1 != b0:
                             continue
-                        new_operands = list(operands)
-                        new_operands[j - 1] = ((a0, a1 * 2), a_lvl)
-                        new_operands[j] = ((b0 * 2, b1), b_lvl)
-                        new_out_pair = out_pair
+                        new_ops_list[j - 1] = ((a0, a1 * 2), alvl)
+                        new_ops_list[j] = ((b0 * 2, b1), blvl)
 
-                    # Estimate new cpu time proportionally to op count change
-                    old_ops = _ops_for_operands(operands)
-                    new_ops = _ops_for_operands(new_operands)
-                    if old_ops == 0:
-                        continue
-                    cur_times = mapping[key]
-                    if isinstance(cur_times, list) and len(cur_times) > 1 and (isinstance(cur_times[0], tuple) or isinstance(cur_times[0], str)):
-                        cur_cpu_for_key = cur_times[1]
-                    else:
-                        cur_cpu_for_key = 0
-                    new_cpu = int(cur_cpu_for_key * new_ops / old_ops)
+                    new_ops = ops_count(new_ops_list)
+                    new_cpu = int(cur_cpu * new_ops / old_ops)
                     if new_cpu > max_cpu_time:
                         continue
 
-                    new_key = _join_key(new_operands, new_out_pair)
-                    new_bw = _bw_time_for_key(new_key)
-                    # Account for second round bandwidth on doubles
-                    if True:
-                        out_dims, out_lvl = new_out_pair
-                        extra_words = 0
-                        # Heuristic from tests:
-                        # - If the output is NOT resident at this link level, we pay an extra
-                        #   round-trip for the output words (when c > 1 to avoid scalar double-count).
-                        if (not isinstance(out_lvl, int) or out_lvl != bw_cache_level) and isinstance(out_dims, tuple) and len(out_dims) == 2 and out_dims[1] > 1:
-                            extra_words += shape_elems(out_dims)
-                        # - If the output IS at this level, the last matrix participates in the
-                        #   additional transfer phase.
-                        if isinstance(out_lvl, int) and out_lvl == bw_cache_level:
-                            last_dims = new_operands[-1][0]
-                            extra_words += shape_elems(last_dims)
-                        new_bw += extra_words * self.input_clocks_per_word
+                    new_key = join_key(new_ops_list, new_outp)
+                    new_bw = bw_time_for(new_key)
+                    # Extra transfer accounting for DBL
+                    (odims, olvl) = new_outp
+                    extra = 0
+                    if (not isinstance(olvl, int) or olvl != level_here) and isinstance(odims, tuple) and len(odims) == 2 and odims[1] > 1:
+                        extra += shape_elems(odims)
+                    if isinstance(olvl, int) and olvl == level_here:
+                        last_dims = new_ops_list[-1][0]
+                        extra += shape_elems(last_dims)
+                    new_bw += extra * self.input_clocks_per_word
 
-                    tag_j = 1 if (len(new_operands) >= 2 and (j == 0 or j == n)) else j
+                    tag = 1 if (len(new_ops_list) >= 2 and (j == 0 or j == n)) else j
                     if new_key not in mapping:
-                        mapping[new_key] = [("DBL", tag_j), new_cpu, new_bw]
-                        heapq.heappush(pq, (new_cpu, new_key))
+                        mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
                     else:
-                        cur_times = mapping[new_key]
-                        if isinstance(cur_times, list) and len(cur_times) > 1 and isinstance(cur_times[0], tuple):
-                            cur_cpu = cur_times[1]
-                            cur_bw = cur_times[2] if len(cur_times) > 2 else 0
-                        elif isinstance(cur_times, list) and len(cur_times) > 1 and isinstance(cur_times[0], str):
-                            cur_cpu = cur_times[1]
-                            cur_bw = 0
+                        cur = mapping[new_key]
+                        if isinstance(cur, list) and len(cur) > 1 and isinstance(cur[0], tuple):
+                            cur_cpu2 = cur[1]
+                            cur_bw2 = cur[2] if len(cur) > 2 else 0
+                        elif isinstance(cur, list) and len(cur) > 1 and isinstance(cur[0], str):
+                            cur_cpu2 = cur[1]
+                            cur_bw2 = 0
                         else:
-                            cur_cpu, cur_bw = 0, 0
-                        updated = False
-                        if new_cpu < cur_cpu:
-                            cur_cpu = new_cpu
-                            updated = True
-                        if new_bw < cur_bw:
-                            cur_bw = new_bw
-                            updated = True
-                        if updated:
-                            mapping[new_key] = [("DBL", tag_j), cur_cpu, cur_bw]
-                            heapq.heappush(pq, (cur_cpu, new_key))
+                            cur_cpu2, cur_bw2 = 0, 0
+                        upd = False
+                        if new_cpu < cur_cpu2:
+                            cur_cpu2 = new_cpu
+                            upd = True
+                        if new_bw < cur_bw2:
+                            cur_bw2 = new_bw
+                            upd = True
+                        if upd:
+                            mapping[new_key] = [("DBL", tag), cur_cpu2, cur_bw2]
             return mapping
 
         out = _dp_expand(out)
