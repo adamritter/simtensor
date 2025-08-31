@@ -266,6 +266,7 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=
         raise RuntimeError("Cannot locate compute node under cache for LDST execution")
     comp_node = comp_cache.parent  # BinOpx
 
+    # If accumulation is requested, bring the destination down to the compute cache
     loaded_out = None
     if accumulate_output is not None:
         try:
@@ -274,17 +275,42 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=
             pass
         loaded_out = node.load(accumulate_output)
 
-    if accumulate_output is not None and loaded_out is not None:
-        out_low = loaded_out
-    else:
-        out_low = comp_cache.calloc(rec_args[0].sz[0], rec_args[-1].sz[1])
-    matmulsimple(comp_node, rec_args[0], rec_args[1], out_low)
-    for t in rec_args[2:]:
-        nxt = comp_cache.calloc(out_low.sz[0], t.sz[1])
-        matmulsimple(comp_node, out_low, t, nxt)
-        comp_cache.free(out_low)
-        out_low = nxt
+    # Perform the chain multiply at the compute cache level. For chains with
+    # more than 2 matrices, we must allocate intermediates that match the
+    # current right-hand matrix width; only the final multiply may target the
+    # accumulation buffer (if provided).
+    n_mats = len(rec_args)
+    if n_mats < 2:
+        raise ValueError("LDST execution requires at least two operands")
 
+    if n_mats == 2:
+        # Simple A @ B -> out
+        if accumulate_output is not None and loaded_out is not None:
+            out_low = loaded_out
+        else:
+            out_low = comp_cache.calloc(rec_args[0].sz[0], rec_args[1].sz[1])
+        matmulsimple(comp_node, rec_args[0], rec_args[1], out_low)
+    else:
+        # Start with an intermediate matching A @ B shape
+        out_low = comp_cache.calloc(rec_args[0].sz[0], rec_args[1].sz[1])
+        matmulsimple(comp_node, rec_args[0], rec_args[1], out_low)
+        # Multiply through the middle of the chain
+        for t in rec_args[2:-1]:
+            nxt = comp_cache.calloc(out_low.sz[0], t.sz[1])
+            matmulsimple(comp_node, out_low, t, nxt)
+            comp_cache.free(out_low)
+            out_low = nxt
+        # Final multiply: write into accumulation buffer if provided
+        last = rec_args[-1]
+        if accumulate_output is not None and loaded_out is not None:
+            matmulsimple(comp_node, out_low, last, loaded_out)
+            comp_cache.free(out_low)
+            out_low = loaded_out
+        else:
+            nxt = comp_cache.calloc(out_low.sz[0], last.sz[1])
+            matmulsimple(comp_node, out_low, last, nxt)
+            comp_cache.free(out_low)
+            out_low = nxt
     # Store result back to this cache conditionally based on desired output level
     out_rows, out_cols = out_low.sz
     target_high = True
