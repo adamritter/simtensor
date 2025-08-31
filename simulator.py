@@ -565,7 +565,7 @@ class Bandwidth:
             candidate_idxs = []
             for i in range(0, len(key), 2):
                 lvl = key[i + 1]
-                if isinstance(lvl, int) and lvl == prev_level:
+                if lvl == prev_level:
                     candidate_idxs.append(i)
             from itertools import combinations
 
