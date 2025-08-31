@@ -560,7 +560,6 @@ class Bandwidth:
         out = {}
         for key, v in base.items():
             base_key = tuple(key)
-            cpu = v[1] if isinstance(v, list) and len(v) > 1 else 0
             out[base_key] = v
             if len(key) % 2 != 0:
                 # Unexpected; skip duplication
