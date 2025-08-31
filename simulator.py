@@ -579,14 +579,7 @@ class Bandwidth:
                         bw_words += shape_elems(kl[i])
                         pair_idxs.append(i // 2)
                     bw_time = bw_words * self.input_clocks_per_word
-                    # Determine CPU time from base value
-                    if isinstance(v, list) and v and isinstance(v[0], str):
-                        if len(v) > 2 and not isinstance(v[1], (int, float)):
-                            cpu_time = v[2]
-                        else:
-                            cpu_time = v[1] if len(v) > 1 else 0
-                    else:
-                        cpu_time = v[0] if isinstance(v, list) and len(v) > 0 else 0
+                    cpu_time = v[1]
                     last_op = ("LDST",) + tuple(pair_idxs)
                     out[tuple(kl)] = [last_op, cpu_time, bw_time]
 
