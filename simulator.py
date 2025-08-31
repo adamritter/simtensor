@@ -594,16 +594,7 @@ class Bandwidth:
             # Priority queue by current cpu time
             pq = []
             for k, times in mapping.items():
-                if not times:
-                    continue
-                cpu = 0
-                if isinstance(times, list) and times:
-                    if len(times) == 1 and isinstance(times[0], int):
-                        cpu = times[0]
-                    elif isinstance(times[0], tuple) and len(times) > 1:
-                        cpu = times[1]
-                    elif isinstance(times[0], str) and len(times) > 1:
-                        cpu = times[1]
+                cpu = times[1]
                 heapq.heappush(pq, (cpu, k))
 
             def _split_key(k):
