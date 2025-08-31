@@ -516,10 +516,24 @@ class Bandwidth:
         return n
 
     def _dp_split_key(self, key):
+
+        """Split a dynamic-programming key into operand pairs and output.
+
+Keys are tuples of alternating (shape, level) pairs as produced by
+dynamic_times. This helper returns:
+- ops: list[((d_i, d_{i+1}), level_i)] for all adjacent matrices
+- outp: ((d_0, d_n), level_out)"""
         pairs = [(key[i], key[i + 1]) for i in range(0, len(key), 2)]
         return pairs[:-1], pairs[-1]
 
     def _dp_join_key(self, ops, outp):
+
+        """Assemble a dynamic-programming key from ops and output pair.
+
+The inverse of _dp_split_key. Accepts:
+- ops: list of ((rows, cols), level)
+- outp: ((rows, cols), level)
+Returns a flat tuple alternating (shape, level)."""
         flat = []
         for shp, lvl in ops:
             flat.extend([shp, lvl])
@@ -527,6 +541,13 @@ class Bandwidth:
         return tuple(flat)
 
     def _dp_ops_count(self, ops):
+
+        """Compute total scalar multiply-add count for a left-associated chain.
+
+ops is a list of ((d_i, d_{i+1}), level) entries describing adjacent
+matrices A0@A1@... in a chain. The cost model used throughout is the
+standard left-associated matmul count:
+    sum_{i=1..n-1} d0 * d_i * d_{i+1}"""
         if len(ops) < 2:
             return 0
         a0 = ops[0][0][0]
@@ -536,6 +557,12 @@ class Bandwidth:
         return total
 
     def _dp_bw_time_for_level(self, key, level_here):
+
+        """Return bandwidth time for all shapes at a given cache level.
+
+Sums the element counts for each (shape, level) pair in `key` whose
+level equals `level_here` (including the output pair), then multiplies
+by this link's input_clocks_per_word to obtain a time in 'clocks'."""
         ops, outp = self._dp_split_key(key)
         words = 0
         for shp, lvl in ops + [outp]:
@@ -544,6 +571,16 @@ class Bandwidth:
         return words * self.input_clocks_per_word
 
     def _dp_update_mapping(self, mapping, new_key, new_cpu, new_bw, tag):
+
+        """Insert or improve a DP entry with computed times and a tag.
+
+- mapping: dict[key] -> [ ("DBL", tag), cpu_time, bw_time ]
+- new_key: DP key to insert/update
+- new_cpu/new_bw: proposed times for compute and this bandwidth link
+- tag: small integer describing where the DBL expansion occurred
+
+Chooses the better of existing/new by minimizing each of cpu_time and
+bw_time independently. If `new_key` is not present, inserts it."""
         if new_key not in mapping:
             mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
             return
