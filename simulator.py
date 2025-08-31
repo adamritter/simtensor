@@ -660,31 +660,14 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
                 continue
 
             new_key = self._dp_join_key(new_ops_list, new_outp)
-            new_bw = self._dp_bw_time_for_level(new_key, level_here)
-            # Extra transfer for DBL: only for inner-node doubling, count one
-            # output element if the output resides at this bandwidth level.
-            extra_words = 0
+            # Base bandwidth time for this link computed from the new key.
+            new_bws = list(map(lambda x: x*2, times[2:]))
+
             if 0 < j < n:
                 (odims, olvl) = new_outp
-                if isinstance(olvl, int) and olvl == level_here:
-                    extra_words = 1
-            new_bw += extra_words * self.input_clocks_per_word
-
-            # Encode the expansion position in the tag used for previous_key.
-            # Use boundary tags 0 (left) and n (right) instead of the
-            # ambiguous sentinel so that previous_key can deterministically
-            # reverse the transformation.
-            # Simply encode the expansion position directly
-            tag = j
-            # Build full bandwidth list by preserving existing bws for outer
-            # links (times[2:]) and replacing this link's bw (last element).
-            prev_bws = times[2:] if len(times) > 2 else []
-            if prev_bws:
-                new_bws_all = list(prev_bws)
-                new_bws_all[-1] = new_bw
-            else:
-                new_bws_all = [new_bw]
-            self._dp_update_mapping(mapping, new_key, new_cpu, new_bws_all, tag)
+                if olvl == level_here:
+                    new_bws[-1] += self._shape_elems(odims)
+            self._dp_update_mapping(mapping, new_key, new_cpu, new_bws, j)
 
     def _dp_expand(self, mapping, level_here, max_cpu_time):
         """Run the bandwidth-level DP expansion over all current entries.
