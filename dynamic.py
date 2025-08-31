@@ -410,6 +410,123 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, out_level_marker=None):
         pass
     return out
 
+def previous_key(key, op=None):
+    """Return the logical previous key for a dynamic-programming entry.
+
+    If `op` is provided, use it to construct the specific predecessor:
+    - LDST: `op` is ("LDST", i, j, ...). Decrease by 1 the level markers for
+      each operand index in the tuple, leaving other markers and all shapes
+      unchanged.
+    - DBL: `op` is ("DBL", tag). Reverse the DBL expansion by halving the
+      affected shape dimensions indicated by `tag` (0..n) and, for boundary
+      tags 0 or n, also halving the corresponding output dimension. Levels are
+      left unchanged.
+
+    If `op` is None or not recognized, fall back to decreasing all integer
+    level markers by 1 (not below 0), preserving shapes.
+    """
+    # Helper to split/join the flat key
+    pairs = [(key[i], key[i + 1]) for i in range(0, len(key), 2)]
+    ops = pairs[:-1]
+    outp = pairs[-1]
+
+    if isinstance(op, tuple) and op:
+        kind = op[0]
+        if kind == "LDST":
+            # Decrease listed operand levels by 1
+            idxs = list(op[1:])
+            kl = list(key)
+            for oi in idxs:
+                pos = 2 * oi + 1
+                if pos < len(kl) - 1:
+                    lvl = kl[pos]
+                    if isinstance(lvl, int) and lvl > 0:
+                        kl[pos] = lvl - 1
+            return tuple(kl)
+        if kind == "DBL":
+            # Reverse the doubling using the tag position
+            try:
+                tag = op[1]
+            except Exception:
+                tag = None
+            if isinstance(tag, int):
+                new_ops = list(ops)
+                (odims, olvl) = outp
+                new_out = (odims, olvl)
+                n = len(new_ops)
+                if n >= 1:
+                    if tag == 0:
+                        # ops[0].rows was doubled; halve it, and halve out.rows
+                        (a0, a1), al = new_ops[0]
+                        new_ops[0] = ((a0 // 2, a1), al)
+                        new_out = ((odims[0] // 2, odims[1]), olvl)
+                    elif tag == n:
+                        # ops[-1].cols was doubled; halve it, and halve out.cols
+                        (b0, b1), bl = new_ops[-1]
+                        new_ops[-1] = ((b0, b1 // 2), bl)
+                        new_out = ((odims[0], odims[1] // 2), olvl)
+                    elif 0 < tag < n:
+                        # Shared dim between ops[tag-1] and ops[tag] was doubled; halve both
+                        (a0, a1), al = new_ops[tag - 1]
+                        (b0, b1), bl = new_ops[tag]
+                        new_ops[tag - 1] = ((a0, a1 // 2), al)
+                        new_ops[tag] = ((b0 // 2, b1), bl)
+                    # Reassemble
+                    flat = []
+                    for shp, lvl in new_ops:
+                        flat.extend([shp, lvl])
+                    flat.extend([new_out[0], new_out[1]])
+                    return tuple(flat)
+    # Fallback: decrease all integer level markers
+    kl = list(key)
+    for i in range(1, len(kl), 2):
+        lvl = kl[i]
+        if isinstance(lvl, int):
+            nlvl = lvl - 1
+            if nlvl < 0:
+                nlvl = 0
+            kl[i] = nlvl
+    return tuple(kl)
+
+
+def extras(key, results):
+    """Compute extra cpu/bandwidth for a row.
+
+    - For BinOpx entries: return None.
+    - For LDST entries: subtract previous row numbers (cpu and bandwidth) from
+      the current row.
+    - For DBL entries: first double the previous row numbers, then subtract
+      that doubled number from the current row.
+    """
+    v = results.get(key)
+    if not isinstance(v, list) or not v:
+        return None
+    # Determine the op kind, if any
+    kind = None
+    if isinstance(v[0], str):
+        kind = v[0]
+    elif isinstance(v[0], tuple):
+        kind = v[0][0] if v[0] else None
+    # BinOpx rows do not report extras
+    if kind == "BinOpx" or kind is None:
+        return None
+
+    prev = results.get(previous_key(key, v[0]))
+    if prev is None:
+        return None
+    # Extras are computed over the numeric tail: bwcpu is just value[1:]
+    cur_tail = list(v[1:])
+    prev_tail = list(prev[1:])
+    # Pad the shorter list (e.g., previous BinOpx with no bw slots) with zeros
+    n = max(len(cur_tail), len(prev_tail))
+    if len(cur_tail) < n:
+        cur_tail += [0] * (n - len(cur_tail))
+    if len(prev_tail) < n:
+        prev_tail += [0] * (n - len(prev_tail))
+    factor = 2 if kind == "DBL" else 1
+    return [cur_tail[i] - factor * prev_tail[i] for i in range(n)]
+
+
 def pp(results):
     for k, v in results.items():
         cpu = 0
@@ -428,14 +545,18 @@ def pp(results):
                 cpu = v[0]
                 bw_time = v[1] if len(v) > 1 else 0
         util = 0.0 if (cpu == 0 and bw_time == 0) else (cpu / max(cpu, bw_time))
-        print(f"{k}: {v} | util={util:.3f}")
+        extra = extras(k, results)
+        if extra is None:
+            print(f"{k}: {v} | util={util:.3f}")
+        else:
+            print(f"{k}: {v} | util={util:.3f} | extras={extra}")
 
 
 
 if __name__ == "__main__":
     cache = Cache(12, muladd)
     bw = Bandwidth(cache)
-    results = muladd.dynamic_times(2, 8)
+    results = bw.dynamic_times(2, 8)
     pp(results)
 
 

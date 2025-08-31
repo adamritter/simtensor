@@ -655,7 +655,7 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
                 new_ops_list[j] = ((b0 * 2, b1), blvl)
 
             new_ops = self._dp_ops_count(new_ops_list)
-            new_cpu = int(cur_cpu * new_ops / old_ops)
+            new_cpu =  int(cur_cpu * new_ops / old_ops)
             if new_cpu > max_cpu_time:
                 continue
 
