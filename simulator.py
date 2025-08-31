@@ -556,7 +556,7 @@ class Bandwidth:
                 n *= d
             return n
 
-        prev_level = getattr(self.cache, 'level', 0)
+        prev_level = self.cache.level
         out = {}
         for key, v in base.items():
             base_key = tuple(key)
