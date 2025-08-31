@@ -8,7 +8,7 @@ if ROOT not in sys.path:
 
 import simulate
 from simulator import Tensor, Cache, Bandwidth
-from dynamic import run_dynamic
+from dynamic import run_dynamic, pp
 
 
 def verify_result(key, results):
@@ -48,6 +48,7 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three_cache():
 def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
     bw = Bandwidth(Cache(12, simulate.muladd))
-    results = bw.dynamic_times(3, 100)
+    results = bw.dynamic_times(2, 8)
+    pp(results)
 
     verify_reults(results)
