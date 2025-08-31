@@ -132,8 +132,18 @@ def run_dynamic(results, node, *tensors, reset_counter=True, accumulate_output=N
             # Fallback: be generous
             high_words = sum(shape_elems(shp) for (shp, _lvl) in key_pairs)
         low_words = sum(shape_elems(shp) for (shp, _lvl) in key_pairs)
+        # Account for a transient extra buffer during chained multiplies: when
+        # we allocate the next intermediate before freeing the previous one,
+        # peak usage can exceed (inputs + final output) by up to the size of a
+        # single matrix. Reserve that headroom using the largest shape present
+        # in the key to avoid "Not enough memory" during LDST/DBL runs.
+        peak_extra = 0
+        for (shp, _lvl) in key_pairs:
+            words = shape_elems(shp)
+            if words > peak_extra:
+                peak_extra = words
         # Build: BinOpx (node) <- Cache(low) <- Bandwidth <- Cache(high)
-        low_cache = Cache(max(1, low_words), node)
+        low_cache = Cache(max(1, low_words + peak_extra), node)
         bw_link = Bandwidth(low_cache)
         high_cache = Cache(max(1, max(high_words, low_words)), bw_link)
         exec_node = high_cache
