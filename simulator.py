@@ -682,14 +682,8 @@ class Bandwidth:
                         mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
                     else:
                         cur = mapping[new_key]
-                        if isinstance(cur, list) and len(cur) > 1 and isinstance(cur[0], tuple):
-                            cur_cpu2 = cur[1]
-                            cur_bw2 = cur[2] if len(cur) > 2 else 0
-                        elif isinstance(cur, list) and len(cur) > 1 and isinstance(cur[0], str):
-                            cur_cpu2 = cur[1]
-                            cur_bw2 = 0
-                        else:
-                            cur_cpu2, cur_bw2 = 0, 0
+                        cur_cpu2 = cur[1]
+                        cur_bw2 = cur[2] if len(cur) > 2 else 0
                         upd = False
                         if new_cpu < cur_cpu2:
                             cur_cpu2 = new_cpu
