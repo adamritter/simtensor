@@ -661,26 +661,21 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
 
             new_key = self._dp_join_key(new_ops_list, new_outp)
             new_bw = self._dp_bw_time_for_level(new_key, level_here)
-            # Extra transfer accounting for DBL
-            (odims, olvl) = new_outp
-            extra = 0
-            if (not isinstance(olvl, int) or olvl != level_here) and isinstance(odims, tuple) and len(odims) == 2 and odims[1] > 1:
-                extra += self._shape_elems(odims)
-            if isinstance(olvl, int) and olvl == level_here:
-                last_dims = new_ops_list[-1][0]
-                extra += self._shape_elems(last_dims)
-            new_bw += extra * self.input_clocks_per_word
+            # Extra transfer for DBL: only for inner-node doubling, count one
+            # output element if the output resides at this bandwidth level.
+            extra_words = 0
+            if 0 < j < n:
+                (odims, olvl) = new_outp
+                if isinstance(olvl, int) and olvl == level_here:
+                    extra_words = 1
+            new_bw += extra_words * self.input_clocks_per_word
 
             # Encode the expansion position in the tag used for previous_key.
             # Use boundary tags 0 (left) and n (right) instead of the
             # ambiguous sentinel so that previous_key can deterministically
             # reverse the transformation.
-            if j == 0:
-                tag = 0
-            elif j == n:
-                tag = n
-            else:
-                tag = j
+            # Simply encode the expansion position directly
+            tag = j
             # Build full bandwidth list by preserving existing bws for outer
             # links (times[2:]) and replacing this link's bw (last element).
             prev_bws = times[2:] if len(times) > 2 else []

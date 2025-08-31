@@ -26,11 +26,11 @@ class TestBandwidthInternalDoubleExtraBW(unittest.TestCase):
 
         self.assertIsInstance(v0, list)
         self.assertEqual(v0[0], ("DBL", 1))
-        self.assertEqual(v0[2], 14)
+        self.assertEqual(v0[2], 10)
 
         self.assertIsInstance(v1, list)
-        self.assertEqual(v1[0], ("DBL", 1))
-        self.assertEqual(v1[2], 22)
+        self.assertEqual(v1[0], ("DBL", 2))
+        self.assertEqual(v1[2], 14)
 
 
 if __name__ == "__main__":
