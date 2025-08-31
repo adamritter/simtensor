@@ -153,16 +153,25 @@ def run_dynamic(results, node, *tensors, reset_counter=True, accumulate_output=N
         high_cache = Cache(max(1, max(high_words, low_words)), bw_link)
         exec_node = high_cache
 
-        # Align tensor levels with the matched key so DBL/LDST selection works
+        # Align tensor levels with the matched key so DBL/LDST selection works.
+        # Clamp any higher logical levels down to the actual cache level we
+        # synthesized. Dynamic tables from multi-link hierarchies can contain
+        # levels > exec_node.level; we execute with a single link here, so
+        # keep tensors at most at exec_node.level to ensure loads produce
+        # compute-level views with the expected levels.
+        exec_level = getattr(exec_node, 'level', 0)
         for i in range(operands_count):
             try:
-                tensors[i].level = operand_levels[i]
+                lvl = operand_levels[i]
+                tensors[i].level = lvl if lvl <= exec_level else exec_level
             except Exception:
                 pass
-        # If an accumulation tensor is provided, align its level as well
+        # If an accumulation tensor is provided, align its level as well with
+        # the same clamping behaviour.
         if accumulate_output is not None and isinstance(out_level_marker, int):
             try:
-                accumulate_output.level = out_level_marker
+                lvl = out_level_marker
+                accumulate_output.level = lvl if lvl <= exec_level else exec_level
             except Exception:
                 pass
 
@@ -207,7 +216,8 @@ def run_dynamic(results, node, *tensors, reset_counter=True, accumulate_output=N
             if comp_node.time != cpu_expected:
                 raise AssertionError("CPU time mismatch: {} != {}".format(comp_node.time, cpu_expected))
         # Bandwidth time
-        if isinstance(entry, list) and len(entry) > 2 and link is not None and hasattr(link, 'time'):
+        if isinstance(entry, list) and len(entry) == 3 and link is not None and hasattr(link, 'time'):
+            # Single-link case: entry is [(op,...), cpu, bw]. Validate bw.
             bw_expected = entry[2]
             # If we additionally loaded the output for accumulation, add its size
             if accumulate_output is not None:
