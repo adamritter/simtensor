@@ -561,9 +561,6 @@ class Bandwidth:
         for key, v in base.items():
             base_key = tuple(key)
             out[base_key] = v
-            if len(key) % 2 != 0:
-                # Unexpected; skip duplication
-                continue
             # Collect even indices (shape positions) at prev_level
             candidate_idxs = []
             for i in range(0, len(key), 2):
