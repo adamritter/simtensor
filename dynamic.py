@@ -354,6 +354,22 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=
 
 
 def _run_dynamic_dbl(node, tensors, accumulate_output, out_level_marker=None):
+    """Execute a matmul chain using the DBL dynamic expansion.
+    
+    DBL is a higher-level dynamic-programming variant that conceptually doubles
+    a shared dimension when adjacent operands reside at this bandwidth level.
+    At execution time, we run it as an LDST with the appropriate operand set
+    and then account for the extra transfer implied by the expansion so that
+    bandwidth-time validation matches the dynamic table.
+    
+    Args:
+        node: the higher cache level (simulator.Cache) above a Bandwidth link
+        tensors: list[Tensor] input matrices resident at `node`
+        accumulate_output: optional Tensor at `node` to accumulate into
+        out_level_marker: output level marker from the dynamic key
+    
+    Returns:
+        Tensor: the result view, same semantics as _run_dynamic_ldst."""
     if not isinstance(node, Cache):
         raise TypeError("DBL execution requires a Cache node for load/store")
     cur_level = getattr(node, 'level', 0)

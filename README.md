@@ -135,3 +135,66 @@ Top-level Functions
 -------------------
 - utilization(cache): `cpu_time / max(cpu_time, max_bandwidth_time)` across the chain
 - reset_counters(cache): zero all bandwidth counters and the compute node time
+
+
+
+Dynamic-programming helpers
+===========================
+
+This project includes a small dynamic-programming (DP) facility to enumerate
+matrix-chain shapes and select efficient execution variants across cache/bandwidth
+levels. It consists of two parts:
+
+- Enumeration: BinOpx.dynamic_times, Cache.dynamic_times, Bandwidth.dynamic_times
+  - BinOpx.dynamic_times(n_mats, limit) enumerates all chains of n_mats matrices
+    with power-of-two dimensions whose total product is bounded by limit. Each
+    entry maps a key of alternating (shape, level_marker) pairs to a CPU-time
+    estimate for a left-associated execution. Example key for a 2-mat chain:
+      ((a,b), 0, (b,c), 0, (a,c), 0)
+    Values are ["BinOpx", cpu_time].
+  - Cache.dynamic_times filters entries by capacity at a given cache level by
+    summing the element counts for shapes whose marker equals that level.
+  - Bandwidth.dynamic_times augments the mapping with bandwidth-aware variants
+    by promoting operands across the link ("LDST") and then applies a DP
+    expansion ("DBL") that doubles shared dimensions when both sides reside at
+    the bandwidth level. Values are either ["BinOpx", cpu] or
+    [("LDST", ...), cpu, bw] or [("DBL", tag), cpu, bw].
+
+- Execution: dynamic.run_dynamic
+  Given a DP results mapping and operands, run_dynamic chooses the matching key
+  (ignoring level markers when necessary) and dispatches to the correct runner:
+  - BinOpx: compute-only, left-associated execution at the compute node.
+  - LDST: load selected operands down one level, compute at the lower cache,
+    then store the result according to the output level marker.
+  - DBL: execute as LDST and account for the extra transfer implied by the
+    expansion so validation matches the DP table.
+
+Usage example
+-------------
+
+```
+from simulator import Cache, Bandwidth
+from simulate import muladd
+from dynamic import run_dynamic
+
+# Build hierarchy: L1 --bw--> L0 -- muladd (compute)
+L0 = Cache(24, muladd)
+bw = Bandwidth(L0)
+L1 = Cache(1000, bw)
+
+# Enumerate and pick a case
+results = bw.dynamic_times(2, 4096)
+A = L1.calloc(2, 2)
+B = L1.calloc(2, 2)
+out = run_dynamic(results, L1, A, B)
+```
+
+Helper notes
+------------
+- Keys always end with the output dims pair. Level markers are integers that
+  refer to cache levels; 0 is the compute level, higher numbers are higher
+  caches across bandwidth links.
+- LDST tuple lists indices of operands that are expected to be resident at the
+  higher cache level before loading down for compute.
+- DBL tag indicates which shared dimension was doubled during expansion; this
+  is used for debugging and does not affect execution.

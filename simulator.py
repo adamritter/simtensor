@@ -561,6 +561,12 @@ class Bandwidth:
             mapping[new_key] = [("DBL", tag), cur_cpu2, cur_bw2]
 
     def _dp_expand_key(self, key, times, mapping, level_here, max_cpu_time):
+        """Attempt DBL expansion for one key.
+        
+        For each legal position j in the chain where both adjacent operands are
+        at this bandwidth level, construct a new key with the shared dimension
+        doubled, scale cpu time proportionally, and compute bandwidth time. If
+        within the CPU budget, update the mapping."""
         ops, outp = self._dp_split_key(key)
         if len(ops) < 2:
             return
