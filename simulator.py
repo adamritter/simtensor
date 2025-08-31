@@ -570,26 +570,43 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
                 words += self._shape_elems(shp)
         return words * self.input_clocks_per_word
 
-    def _dp_update_mapping(self, mapping, new_key, new_cpu, new_bw, tag):
-
+    def _dp_update_mapping(self, mapping, new_key, new_cpu, new_bws, tag):
         """Insert or improve a DP entry with computed times and a tag.
 
-- mapping: dict[key] -> [ ("DBL", tag), cpu_time, bw_time ]
-- new_key: DP key to insert/update
-- new_cpu/new_bw: proposed times for compute and this bandwidth link
-- tag: small integer describing where the DBL expansion occurred
+        Supports multiple bandwidth times (for multi-link hierarchies). The
+        mapping values have the form:
+            [ ("DBL", tag), cpu_time, bw_time_link0, bw_time_link1, ... ]
 
-Chooses the better of existing/new by minimizing each of cpu_time and
-bw_time independently. If `new_key` is not present, inserts it."""
+        Args:
+            mapping: dict to mutate
+            new_key: DP key to insert/update
+            new_cpu: proposed compute time
+            new_bws: list of bandwidth times for all
+                     links seen so far; order must match existing entries
+            tag: descriptor for where the DBL expansion occurred
+
+        Update policy:
+        - CPU time: keep the minimum observed.
+        - Bandwidth times: compare by the maximum across links; keep the list
+          whose maximum is smaller. This mirrors utilization being dominated by
+          the slowest link.
+        """
         if new_key not in mapping:
-            mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
+            mapping[new_key] = [("DBL", tag), new_cpu] + new_bws
             return
         cur = mapping[new_key]
-        cur_bws = cur[2:] 
+        cur_bws = cur[2:]
+
         if new_cpu != cur[1]:
             raise Exception("new_cpu != cur_cpu")
-        if new_bw < max(cur_bws + [0]):
-            mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
+
+        cur_max = max(cur_bws) if cur_bws else 0
+        new_max = max(new_bws) if new_bws else 0
+        best_bws = cur_bws if cur_max <= new_max else new_bws
+
+        # Only update the mapping if something improves
+        if best_bws is not cur_bws:
+            mapping[new_key] = [("DBL", tag), new_cpu] + best_bws
 
     def _dp_expand_key(self, key, times, mapping, level_here, max_cpu_time):
         """Attempt DBL expansion for one key.
@@ -655,7 +672,15 @@ bw_time independently. If `new_key` is not present, inserts it."""
             new_bw += extra * self.input_clocks_per_word
 
             tag = 1 if (len(new_ops_list) >= 2 and (j == 0 or j == n)) else j
-            self._dp_update_mapping(mapping, new_key, new_cpu, new_bw, tag)
+            # Build full bandwidth list by preserving existing bws for outer
+            # links (times[2:]) and replacing this link's bw (last element).
+            prev_bws = times[2:] if len(times) > 2 else []
+            if prev_bws:
+                new_bws_all = list(prev_bws)
+                new_bws_all[-1] = new_bw
+            else:
+                new_bws_all = [new_bw]
+            self._dp_update_mapping(mapping, new_key, new_cpu, new_bws_all, tag)
 
     def _dp_expand(self, mapping, level_here, max_cpu_time):
         """Run the bandwidth-level DP expansion over all current entries.
