@@ -509,7 +509,6 @@ class Bandwidth:
         return self.time
 
 
-    # --- Dynamic-programming helpers (split out of a monolithic function) ---
     def _shape_elems(self, shape):
         n = 1
         for d in shape:
@@ -622,6 +621,11 @@ class Bandwidth:
             self._dp_update_mapping(mapping, new_key, new_cpu, new_bw, tag)
 
     def _dp_expand(self, mapping, level_here, max_cpu_time):
+        """Run the bandwidth-level DP expansion over all current entries.
+
+        Iterates over a snapshot of the mapping and calls _dp_expand_key for
+        each entry, mutating and returning the mapping with any improvements.
+        """
         for key, times in list(mapping.items()):
             self._dp_expand_key(key, times, mapping, level_here, max_cpu_time)
         return mapping
