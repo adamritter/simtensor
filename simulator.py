@@ -508,6 +508,124 @@ class Bandwidth:
             self.time = max(tin, tout)
         return self.time
 
+
+    # --- Dynamic-programming helpers (split out of a monolithic function) ---
+    def _shape_elems(self, shape):
+        n = 1
+        for d in shape:
+            n *= d
+        return n
+
+    def _dp_split_key(self, key):
+        pairs = [(key[i], key[i + 1]) for i in range(0, len(key), 2)]
+        return pairs[:-1], pairs[-1]
+
+    def _dp_join_key(self, ops, outp):
+        flat = []
+        for shp, lvl in ops:
+            flat.extend([shp, lvl])
+        flat.extend([outp[0], outp[1]])
+        return tuple(flat)
+
+    def _dp_ops_count(self, ops):
+        if len(ops) < 2:
+            return 0
+        a0 = ops[0][0][0]
+        total = 0
+        for i in range(len(ops) - 1):
+            total += a0 * ops[i][0][1] * ops[i + 1][0][1]
+        return total
+
+    def _dp_bw_time_for_level(self, key, level_here):
+        ops, outp = self._dp_split_key(key)
+        words = 0
+        for shp, lvl in ops + [outp]:
+            if isinstance(lvl, int) and lvl == level_here:
+                words += self._shape_elems(shp)
+        return words * self.input_clocks_per_word
+
+    def _dp_update_mapping(self, mapping, new_key, new_cpu, new_bw, tag):
+        if new_key not in mapping:
+            mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
+            return
+        cur = mapping[new_key]
+        cur_cpu2 = cur[1]
+        cur_bw2 = cur[2] if len(cur) > 2 else 0
+        upd = False
+        if new_cpu < cur_cpu2:
+            cur_cpu2 = new_cpu
+            upd = True
+        if new_bw < cur_bw2:
+            cur_bw2 = new_bw
+            upd = True
+        if upd:
+            mapping[new_key] = [("DBL", tag), cur_cpu2, cur_bw2]
+
+    def _dp_expand_key(self, key, times, mapping, level_here, max_cpu_time):
+        ops, outp = self._dp_split_key(key)
+        if len(ops) < 2:
+            return
+        old_ops = self._dp_ops_count(ops)
+        if old_ops == 0:
+            return
+        cur_cpu = times[1]
+        n = len(ops)
+        for j in range(n + 1):
+            new_ops_list = list(ops)
+            new_outp = outp
+            if j == 0:
+                (shp, lvl) = ops[0]
+                if lvl != level_here or outp[1] != level_here:
+                    continue
+                a0, a1 = shp
+                new_ops_list[0] = ((a0 * 2, a1), lvl)
+                (od, ol) = outp
+                new_outp = ((od[0] * 2, od[1]), ol)
+            elif j == n:
+                (shp, lvl) = ops[-1]
+                if lvl != level_here or outp[1] != level_here:
+                    continue
+                b0, b1 = shp
+                new_ops_list[-1] = ((b0, b1 * 2), lvl)
+                (od, ol) = outp
+                new_outp = ((od[0], od[1] * 2), ol)
+            else:
+                (ashp, alvl) = ops[j - 1]
+                (bshp, blvl) = ops[j]
+                if alvl != level_here or blvl != level_here:
+                    continue
+                a0, a1 = ashp
+                b0, b1 = bshp
+                if a1 != b0:
+                    continue
+                new_ops_list[j - 1] = ((a0, a1 * 2), alvl)
+                new_ops_list[j] = ((b0 * 2, b1), blvl)
+
+            new_ops = self._dp_ops_count(new_ops_list)
+            new_cpu = int(cur_cpu * new_ops / old_ops)
+            if new_cpu > max_cpu_time:
+                continue
+
+            new_key = self._dp_join_key(new_ops_list, new_outp)
+            new_bw = self._dp_bw_time_for_level(new_key, level_here)
+            # Extra transfer accounting for DBL
+            (odims, olvl) = new_outp
+            extra = 0
+            if (not isinstance(olvl, int) or olvl != level_here) and isinstance(odims, tuple) and len(odims) == 2 and odims[1] > 1:
+                extra += self._shape_elems(odims)
+            if isinstance(olvl, int) and olvl == level_here:
+                last_dims = new_ops_list[-1][0]
+                extra += self._shape_elems(last_dims)
+            new_bw += extra * self.input_clocks_per_word
+
+            tag = 1 if (len(new_ops_list) >= 2 and (j == 0 or j == n)) else j
+            self._dp_update_mapping(mapping, new_key, new_cpu, new_bw, tag)
+
+    def _dp_expand(self, mapping, level_here, max_cpu_time):
+        for key, times in list(mapping.items()):
+            self._dp_expand_key(key, times, mapping, level_here, max_cpu_time)
+        return mapping
+
     def load(self, tensor):
         # Deep-copy into the child cache and account input
         t2 = copy.deepcopy(tensor)
@@ -587,115 +705,7 @@ class Bandwidth:
         # key is within half the allowed budget, attempt to double the shared
         # dimension between adjacent matrices that both reside at this bandwidth
         # cache level. Update times if improved and push new keys if added.
-        def _dp_expand(mapping):
-            max_cpu_time = max_cpu
-            level_here = prev_level + 1
-
-            def split_key(k):
-                pairs = [(k[i], k[i + 1]) for i in range(0, len(k), 2)]
-                return pairs[:-1], pairs[-1]  # operands, out_pair
-
-            def join_key(ops, outp):
-                flat = []
-                for shp, lvl in ops:
-                    flat.extend([shp, lvl])
-                flat.extend([outp[0], outp[1]])
-                return tuple(flat)
-
-            def ops_count(ops):
-                if len(ops) < 2:
-                    return 0
-                a0 = ops[0][0][0]
-                total = 0
-                for i in range(len(ops) - 1):
-                    total += a0 * ops[i][0][1] * ops[i + 1][0][1]
-                return total
-
-            def bw_time_for(k):
-                ops, outp = split_key(k)
-                words = 0
-                for shp, lvl in ops + [outp]:
-                    if isinstance(lvl, int) and lvl == level_here:
-                        words += shape_elems(shp)
-                return words * self.input_clocks_per_word
-
-            # Expand only from the snapshot of current entries
-            for key, times in list(mapping.items()):
-                ops, outp = split_key(key)
-                if len(ops) < 2:
-                    continue
-                old_ops = ops_count(ops)
-                if old_ops == 0:
-                    continue
-                cur_cpu = times[1]
-                n = len(ops)
-                for j in range(n + 1):
-                    new_ops_list = list(ops)
-                    new_outp = outp
-                    if j == 0:
-                        (shp, lvl) = ops[0]
-                        if lvl != level_here or outp[1] != level_here:
-                            continue
-                        a0, a1 = shp
-                        new_ops_list[0] = ((a0 * 2, a1), lvl)
-                        (od, ol) = outp
-                        new_outp = ((od[0] * 2, od[1]), ol)
-                    elif j == n:
-                        (shp, lvl) = ops[-1]
-                        if lvl != level_here or outp[1] != level_here:
-                            continue
-                        b0, b1 = shp
-                        new_ops_list[-1] = ((b0, b1 * 2), lvl)
-                        (od, ol) = outp
-                        new_outp = ((od[0], od[1] * 2), ol)
-                    else:
-                        (ashp, alvl) = ops[j - 1]
-                        (bshp, blvl) = ops[j]
-                        if alvl != level_here or blvl != level_here:
-                            continue
-                        a0, a1 = ashp
-                        b0, b1 = bshp
-                        if a1 != b0:
-                            continue
-                        new_ops_list[j - 1] = ((a0, a1 * 2), alvl)
-                        new_ops_list[j] = ((b0 * 2, b1), blvl)
-
-                    new_ops = ops_count(new_ops_list)
-                    new_cpu = int(cur_cpu * new_ops / old_ops)
-                    if new_cpu > max_cpu_time:
-                        continue
-
-                    new_key = join_key(new_ops_list, new_outp)
-                    new_bw = bw_time_for(new_key)
-                    # Extra transfer accounting for DBL
-                    (odims, olvl) = new_outp
-                    extra = 0
-                    if (not isinstance(olvl, int) or olvl != level_here) and isinstance(odims, tuple) and len(odims) == 2 and odims[1] > 1:
-                        extra += shape_elems(odims)
-                    if isinstance(olvl, int) and olvl == level_here:
-                        last_dims = new_ops_list[-1][0]
-                        extra += shape_elems(last_dims)
-                    new_bw += extra * self.input_clocks_per_word
-
-                    tag = 1 if (len(new_ops_list) >= 2 and (j == 0 or j == n)) else j
-                    if new_key not in mapping:
-                        mapping[new_key] = [("DBL", tag), new_cpu, new_bw]
-                    else:
-                        cur = mapping[new_key]
-                        cur_cpu2 = cur[1]
-                        cur_bw2 = cur[2] if len(cur) > 2 else 0
-                        upd = False
-                        if new_cpu < cur_cpu2:
-                            cur_cpu2 = new_cpu
-                            upd = True
-                        if new_bw < cur_bw2:
-                            cur_bw2 = new_bw
-                            upd = True
-                        if upd:
-                            mapping[new_key] = [("DBL", tag), cur_cpu2, cur_bw2]
-            return mapping
-
-        out = _dp_expand(out)
+        out = self._dp_expand(out, prev_level + 1, max_cpu)
         return out
 
 
