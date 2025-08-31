@@ -50,5 +50,6 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
     bw = Bandwidth(Cache(12, simulate.muladd))
     results = bw.dynamic_times(3, 1000)
     pp(results)
+    assert len(results) == 653
 
     verify_reults(results)
