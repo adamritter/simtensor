@@ -385,8 +385,17 @@ class Cache:
             raise Exception("Data not found in cache during load: ", m.data, " for tensor ", m)
         return self.parent.load(m, allow_lower_level)
 
-    def store(self, m):
-        """Move a view one level up; updates bandwidth output and parent alloc."""
+    def store(self, m, allow_lower_level=False):
+        """Move a view one level up; updates bandwidth output and parent alloc.
+
+        When called from a higher-level cache with allow_lower_level=True and
+        the tensor resides multiple levels below, this method routes the call
+        down to the appropriate intermediate cache so that exactly one-level
+        promotion occurs, mirroring the behavior of `load`.
+        """
+        if allow_lower_level and self.parentcache is not None and m.level < self.level - 1:
+            return self.parentcache.store(m, allow_lower_level)
+
         m2 = self.parent.store(m)
         if m2.level != self.level:
             raise Exception("Tensor levels don't match")
