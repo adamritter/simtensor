@@ -62,9 +62,9 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
         # Just run it
         out = _run_dynamic_binopx(node, tensors, accumulate_output)
     elif entry[0][0] == "LDST":
-        out = _run_dynamic_ldst(node, tensors, accumulate_output, entry[1], out_level=out_level, key=key, results=results)
+        out = _run_dynamic_ldst(node, tensors, accumulate_output, entry[0][1:], out_level=out_level, key=key, results=results)
     elif entry[0][0] == "DBL":
-        out = _run_dynamic_dbl(node, tensors, accumulate_output, entry[1], out_level=out_level, key=key, results=results)
+        out = _run_dynamic_dbl(node, tensors, accumulate_output, entry[0][1], out_level=out_level, key=key, results=results)
     else:
         raise NotImplementedError("Unsupported dynamic entry type: {}".format(entry[0]))
 
@@ -108,89 +108,41 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
     predecessor dynamic entry using run_dynamic. This avoids re-implementing
     the matmul here and ensures consistent accounting.
     """
+    if isinstance(node, Bandwidth):
+        node = node.cache
     if not isinstance(node, Cache):
         raise TypeError("LDST execution requires a Cache node for load/store")
 
-    # Determine which operands to load at this step
-    out_pos = len(tensors)
-    idxs = list(bw_op[1:]) if bw_op and len(bw_op) > 1 else []
-    load_idxs = [i for i in idxs if i < out_pos]
-
     # Load selected operands down one level
-    loaded = {}
-    for i in load_idxs:
-        try:
-            node.alloc(tensors[i])
-        except Exception:
-            pass
-        loaded[i] = node.load(tensors[i])
-
-    # If accumulation is requested, load the destination as well
-    loaded_out = None
-    if accumulate_output is not None:
-        try:
-            node.alloc(accumulate_output)
-        except Exception:
-            pass
+    loaded = list(tensors).copy()
+    for i in bw_op:
+        if i < len(loaded):
+            loaded[i] = node.load(tensors[i])
+    
+    loaded_out = accumulate_output
+    if loaded_out and len(tensors) in bw_op:
         loaded_out = node.load(accumulate_output)
-
-    # Build argument list for the predecessor run: use loaded views where
-    # applicable so the next dynamic step sees reduced levels.
-    rec_args = [loaded.get(i, tensors[i]) for i in range(len(tensors))]
-
-    # Compute predecessor key and delegate to run_dynamic without resetting
-    # counters so bandwidth inputs accumulate across LDST steps.
-    if key is None:
-        raise ValueError("_run_dynamic_ldst requires key")
-
-    prev = previous_key(key, bw_op)
-
-    # The results table is required to resolve the predecessor algorithm
-    if results is None:
-        raise ValueError("_run_dynamic_ldst requires results mapping for recursion")
 
     out_low = run_dynamic(
         results,
         node.parentcache,
-        *rec_args,
+        *loaded,
         reset_counter=False,
         accumulate_output=loaded_out,
+        out_level=out_level-1 if (len(tensors) in bw_op) else out_level
     )
 
-    target_high = False
-    out_view = out_low
-    if target_high:
-        # Choose destination view: either reuse the provided high-level output
-        # or allocate a fresh one.
-        if accumulate_output is None:
-            out_high = node.calloc(out_low.sz[0], out_low.sz[1])
-        else:
-            out_high = accumulate_output
-        node.store_to(out_low, out_high)
-        out_view = out_high
+    if accumulate_output is None:
+        out_high = node.calloc(out_low.sz[0], out_low.sz[1])
+    else:
+        out_high = accumulate_output
+    node.store_to(out_low, out_high)
 
-    # Free loaded inputs in the child cache to keep capacity bounded
-    for i in load_idxs:
-        try:
+    for i in bw_op:
+        if i < len(loaded):
             node.parentcache.free(loaded[i])
-        except Exception:
-            pass
 
-    # Track whether we loaded the output for accumulation to let outer wrapper
-    # adjust counters on subsequent non-accumulate calls
-    link = getattr(node, 'parent', None)
-    if accumulate_output is not None and link is not None:
-        try:
-            setattr(link, '_last_output_load_words', (accumulate_output.sz[0] * accumulate_output.sz[1]))
-        except Exception:
-            pass
-    elif link is not None:
-        try:
-            setattr(link, '_last_output_load_words', 0)
-        except Exception:
-            pass
-
-    return out_view
+    return out_high
 
 
 def _run_dynamic_dbl(node, tensors, accumulate_output, out_level_marker=None, key=None, dbl_op=None, results=None):
