@@ -9,7 +9,7 @@ import os
 DEBUG = int(os.environ.get("DEBUG", 0))
 
 
-def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, accumulate_output=None):
+def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, accumulate_output=None, only_store=False):
     """
     Execute a matrix-chain multiplication using the algorithm indicated by a
     precomputed dynamic result entry.
@@ -68,11 +68,11 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
     orig_counter = get_counters(node)
     if entry[0] == "BinOpx":
         # Just run it
-        out = _run_dynamic_binopx(node, tensors, accumulate_output)
+        out = _run_dynamic_binopx(node, tensors, accumulate_output, only_store=only_store)
     elif entry[0][0] == "LDST":
-        out = _run_dynamic_ldst(node, tensors, accumulate_output, entry[0][1:], out_level=out_level, key=key, results=results)
+        out = _run_dynamic_ldst(node, tensors, accumulate_output, entry[0][1:], out_level=out_level, key=key, results=results, only_store=only_store)
     elif entry[0][0] == "DBL":
-        out = _run_dynamic_dbl(node, tensors, accumulate_output, entry[0][1], out_level=out_level, key=key, results=results)
+        out = _run_dynamic_dbl(node, tensors, accumulate_output, entry[0][1], out_level=out_level, key=key, results=results, only_store=only_store)
     else:
         raise NotImplementedError("Unsupported dynamic entry type: {}".format(entry[0]))
 
@@ -92,7 +92,7 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
     return out
 
 
-def _run_dynamic_binopx(node, tensors, accumulate_output):
+def _run_dynamic_binopx(node, tensors, accumulate_output, only_store=False):
     root_node = node.root_node()
 
     n_mats = len(tensors)
@@ -143,7 +143,7 @@ def _run_dynamic_binopx(node, tensors, accumulate_output):
     return out
 
 
-def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, key=None, results=None):
+def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, key=None, results=None, only_store=False):
     """Execute one LDST step by loading listed operands, then running the
     predecessor dynamic entry using run_dynamic. This avoids re-implementing
     the matmul here and ensures consistent accounting.
@@ -167,7 +167,8 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
         *loaded,
         reset_counter=False,
         accumulate_output=loaded_out,
-        out_level=out_level-1 if (len(tensors) in bw_op) else out_level
+        out_level=out_level-1 if (len(tensors) in bw_op) else out_level,
+        only_store=only_store
     )
 
     if accumulate_output is None:
@@ -188,7 +189,7 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
     return out_high
 
 
-def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=None, results=None):
+def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=None, results=None, only_store=False):
     """Execute a DBL split by running two half-problems and writing directly
     into the appropriate output slices. No temps, minimal branching."""
     m = len(tensors)
@@ -218,6 +219,7 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
             reset_counter=False,
             accumulate_output=out[0:h, :],
             out_level=out_level,
+            only_store=only_store,
         )
         run_dynamic(
             results,
@@ -226,6 +228,7 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
             reset_counter=False,
             accumulate_output=out[h:2 * h, :],
             out_level=out_level,
+            only_store=only_store,
         )
     elif j == m:
         out = node.calloc(rows, cols, level=out_level)
@@ -240,6 +243,7 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
             reset_counter=False,
             accumulate_output=out[:, 0:h],
             out_level=out_level,
+            only_store=only_store,
         )
         run_dynamic(
             results,
@@ -248,6 +252,7 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
             reset_counter=False,
             accumulate_output=out[:, h:2 * h],
             out_level=out_level,
+            only_store=only_store,
         )
     else:
         h = tensors[j].sz[0] // 2
@@ -256,10 +261,10 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
         ops2[j - 1] = tensors[j - 1][:, h:2 * h]
         ops2[j] = tensors[j][h:2 * h, :]
         if accumulate_output is None:
-            out = run_dynamic(results, node, *ops1, reset_counter=False, out_level=out_level)
+            out = run_dynamic(results, node, *ops1, reset_counter=False, out_level=out_level, only_store=only_store)
         else:
-            run_dynamic(results, node, *ops1, reset_counter=False, accumulate_output=out, out_level=out_level)
-        run_dynamic(results, node, *ops2, reset_counter=False, accumulate_output=out, out_level=out_level)
+            run_dynamic(results, node, *ops1, reset_counter=False, accumulate_output=out, out_level=out_level, only_store=only_store)
+        run_dynamic(results, node, *ops2, reset_counter=False, accumulate_output=out, out_level=out_level, only_store=only_store)
 
     return out
 
