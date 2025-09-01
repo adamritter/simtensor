@@ -107,12 +107,16 @@ def _run_dynamic_binopx(node, tensors, accumulate_output):
                 # otherwise fall back to a plain Tensor allocation.
                 if highest_cache is not None:
                     dest = highest_cache.calloc(left.sz[0], right.sz[1])
+                    if dest is None:
+                        raise ValueError("calloc error: dest is None, accumulate_output is ", accumulate_output, ", highest_cache is ", highest_cache, ", is_last is ", is_last)
                 else:
                     # No cache in the hierarchy (pure BinOp tree).
                     dest = Tensor.zeros(left.sz[0], right.sz[1], level=0)
         else:
             # For intermediate results we still allocate at level‑0.
             dest = Tensor.zeros(left.sz[0], right.sz[1], level=0)
+        if dest is None:
+            raise ValueError("dest is None, accumulate_output is ", accumulate_output, ", highest_cache is ", highest_cache, ", is_last is ", is_last)
         if is_last:
             out = dest
         matmulsimple(root_node, left, right, dest)

@@ -22,6 +22,8 @@ import heapq
 # - Needs to have vectorization support
 # - Separate hardware from algorithm
 
+lastid = 1
+
 class Tensor:
     """Lightweight n-D tensor view over a flat buffer.
 
@@ -32,11 +34,14 @@ class Tensor:
     - offset: starting index into `data`
     - skips: per-dimension strides (elements) for the view
     """
-    def __init__(self, data, level, sz, offset=0, skips=None):
+    def __init__(self, data, level, sz, offset=0, skips=None, uid=None):
         self.data = data
         self.level = level
         self.sz = sz
         self.offset = offset
+        global lastid
+        self.uid = lastid if uid is None else uid
+        lastid += 1
         if skips is None:
             skips = []
             m = 1
@@ -80,10 +85,10 @@ class Tensor:
             if stop < 0:
                 stop = stop + self.sz[0]
             offset = self.offset + self.skips[0]*start
-            r = Tensor(self.data, self.level, [stop-start] + self.sz[1:], offset, self.skips)
+            r = Tensor(self.data, self.level, [stop-start] + self.sz[1:], offset, self.skips, self.uid)
         elif isinstance(key, int):
             offset = self.offset + self.skips[0]*key
-            r = Tensor(self.data, self.level, self.sz[1:], offset, self.skips[1:])
+            r = Tensor(self.data, self.level, self.sz[1:], offset, self.skips[1:], self.uid)
 
         if isinstance(key2, slice):
             start=key2.start or 0
@@ -93,10 +98,10 @@ class Tensor:
             if stop < 0:
                 stop = stop + r.sz[1]
             offset = r.offset + r.skips[1]*start
-            r = Tensor(r.data, r.level, [r.sz[0]]+[stop-start] + r.sz[2:], offset, r.skips)
+            r = Tensor(r.data, r.level, [r.sz[0]]+[stop-start] + r.sz[2:], offset, r.skips, r.uid)
         elif isinstance(key2, int):
             offset = r.offset + r.skips[1]*key2
-            r = Tensor(r.data, r.level, [r.sz[0]]+r.sz[2:], offset, [r.skips[0]]+ r.skips[2:])
+            r = Tensor(r.data, r.level, [r.sz[0]]+r.sz[2:], offset, [r.skips[0]]+ r.skips[2:], r.uid)
         return r
 
     def __setitem__(self, key, value):
@@ -344,29 +349,29 @@ class Cache:
 
     def alloc(self, tensor):
         """Mark tensor storage as resident; raises if capacity exceeded."""
-        if id(tensor.data) in self.datas:
-            return
+        if tensor.uid in self.datas:
+            raise Exception("Data already in cache: ", tensor.data)
         self.used += tensor.size()
         if self.used > self.size:
             raise Exception("Not enough memory")
-        self.datas.add(id(tensor.data))
+        self.datas.add(tensor.uid)
         return tensor
 
     def free(self, tensor):
         """Release tensor storage from this cache."""
-        self.datas.remove(id(tensor.data))
+        self.datas.remove(tensor.uid)
         self.used -= tensor.size()
 
     def run(self, op, *args):
         """Run an op with tensors that must be resident at this level."""
         for arg in args:
-            if type(arg) == Tensor and id(arg.data) not in self.datas:
+            if type(arg) == Tensor and arg.uid not in self.datas:
                 raise Exception("Data not found in cache: ", arg.data, " for tensor ", arg)
         return op(self.parent, *args)
 
     def load(self, m):
         """Move a view one level down; updates bandwidth input and residency."""
-        if id(m.data) not in self.datas:
+        if m.uid not in self.datas:
             raise Exception("Data not found in cache during load: ", m.data, " for tensor ", m)
         return self.parent.load(m)
 
@@ -390,8 +395,8 @@ class Cache:
         Requirements:
         - `src.level == self.level - 1`
         - `dst.level == self.level`
-        - `id(src.data)` is resident in the child cache
-        - `id(dst.data)` is resident in this cache
+        - `src.uid` is resident in the child cache
+        - `dst.uid` is resident in this cache
         - `src.size() == dst.size()` (same number of elements)
         """
         # Validate cache relationship
@@ -405,9 +410,9 @@ class Cache:
             raise Exception("Destination tensor level must match this cache level")
 
         # Validate residency
-        if id(src.data) not in self.parentcache.datas:
+        if src.uid not in self.parentcache.datas:
             raise Exception("Source data not found in child cache during store_to")
-        if id(dst.data) not in self.datas:
+        if dst.uid not in self.datas:
             raise Exception("Destination data not found in this cache during store_to")
 
         # Accounting like `store`: this bumps bandwidth.output and frees from child.
@@ -705,6 +710,9 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
     def load(self, tensor):
         # Deep-copy into the child cache and account input
         t2 = copy.deepcopy(tensor)
+        global lastid
+        t2.uid = lastid
+        lastid += 1
         self.input += t2.size()
         self.cache.alloc(t2)
         t2.level -= 1
