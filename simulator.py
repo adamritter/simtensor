@@ -365,7 +365,7 @@ class Cache:
         if allow_lower_level and tensor.level < self.level:
             return self.parentcache.free(tensor, allow_lower_level)
         if tensor.level != self.level:
-            raise Exception("Tensor level doesn't match cache level")
+            raise Exception("Tensor level doesn't match cache level: tensor.level=", tensor.level, " self.level=", self.level)
         if tensor.uid not in self.datas:
             raise Exception("Free: Tensor not found in cache: ", tensor.data, " for tensor ", tensor, " in cache ", self)
         self.datas.remove(tensor.uid)
@@ -390,7 +390,7 @@ class Cache:
         m2 = self.parent.store(m)
         if m2.level != self.level:
             raise Exception("Tensor levels don't match")
-        self.alloc(m2)
+        return self.alloc(m2)
     
     def store_to(self, src, dst, allow_lower_level=False):
         """
@@ -412,11 +412,17 @@ class Cache:
         # Validate cache relationship
         if not isinstance(self.parent, Bandwidth) or self.parentcache is None:
             raise Exception("store_to requires a parent Bandwidth and child Cache")
+        
+        if src.level + 1 != dst.level:
+            raise Exception("Source and destination levels must be one level apart for store_to")
 
-        # Validate levels
+        # If allowed, promote src up to the level directly below this cache by
+        # moving one level at a time and recursing.
+        if allow_lower_level and src.level < self.level - 1:
+            return self.parent.store_to(src, dst, allow_lower_level)
+
+        # Validate levels after any promotion
         if src.level != self.level - 1:
-            if allow_lower_level:
-                return self.parent.store_to(src, dst, allow_lower_level)
             raise Exception("Source tensor must be exactly one level below destination cache")
         if dst.level != self.level:
             raise Exception("Destination tensor level must match this cache level")
@@ -550,6 +556,74 @@ class Bandwidth:
         if not allow_lower_level:
             raise Exception("Bandwidth.cachecontains does not support allow_lower_level=False")
         return self.cache.cachecontains(tensor, allow_lower_level)
+
+    def store_to(self, src, dst, allow_lower_level=False):
+        """Route or execute a store_to across this link.
+
+        Cases:
+        - If `src.level` is below `self.cache.level`, delegate downstream to
+          allow promotion towards this link.
+        - If `dst.level` equals the level above this link and `src.level` is
+          exactly `self.cache.level`, move the data across (accounting output)
+          and then copy element-wise into `dst`.
+        - Otherwise, if `allow_lower_level` is True, delegate to downstream
+          cache for further handling.
+        """
+        if not allow_lower_level:
+            raise Exception("Bandwidth.store_to does not support allow_lower_level=False")
+
+        # Delegate deeper if source is below our child cache level
+        if src.level < self.cache.level:
+            return self.cache.store_to(src, dst, allow_lower_level)
+
+        # If destination is the level above this link, we can perform the
+        # transfer and local copy.
+        upper_level = self.cache.level + 1
+        if dst.level == upper_level:
+            if src.level != self.cache.level:
+                # Nothing to do at this link; delegate down if permitted
+                return self.cache.store_to(src, dst, allow_lower_level)
+            # Move src across the link and free in child
+            self.store(src)
+            # Sizes must match
+            if src.size() != dst.size():
+                raise Exception("Source and destination sizes must match for store_to")
+            # Copy element-wise
+            sz = src.sz
+            if len(sz) != len(dst.sz):
+                raise Exception("Source and destination ranks must match for store_to")
+            def rec(dim, off_s, off_d):
+                if dim == len(sz):
+                    dst.data[off_d] = src.data[off_s]
+                    return
+                step_s = src.skips[dim]
+                step_d = dst.skips[dim]
+                for i in range(sz[dim]):
+                    rec(dim + 1, off_s + i * step_s, off_d + i * step_d)
+            rec(0, src.offset, dst.offset)
+            return dst
+
+        # Fallback: delegate to downstream cache for further routing
+        return self.cache.store_to(src, dst, allow_lower_level)
+
+    def calloc(self, n, m, level=None):
+        """Allocate a zero tensor at a requested level relative to this link.
+
+        - If level equals the level above this link, return a standalone Tensor
+          (no residency tracking at bandwidth-only level).
+        - If level is below, delegate to the child cache.
+        - If level is None, default to the level above this link.
+        """
+        if level is None:
+            level = self.cache.level + 1
+        if level == self.cache.level + 1:
+            data = [0] * (n * m)
+            return Tensor(data, level, [n, m])
+        if level <= self.cache.level:
+            return self.cache.calloc(n, m, level)
+        # No knowledge of higher caches; return a tensor at the requested level
+        data = [0] * (n * m)
+        return Tensor(data, level, [n, m])
 
     def _update_time(self):
         if self.output_clocks_per_word is None:
