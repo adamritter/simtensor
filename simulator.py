@@ -357,8 +357,12 @@ class Cache:
         self.datas.add(tensor.uid)
         return tensor
 
-    def free(self, tensor):
+    def free(self, tensor, allow_lower_level=False):
         """Release tensor storage from this cache."""
+        if allow_lower_level and tensor.level < self.level:
+            return self.parentcache.free(tensor, allow_lower_level)
+        if tensor.level != self.level:
+            raise Exception("Tensor level doesn't match cache level")
         self.datas.remove(tensor.uid)
         self.used -= tensor.size()
 
@@ -733,7 +737,6 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
         return (
             f"<Bandwidth input: {self.input}, output: {self.output}, time: {self.time}, parent: {self.cache}>"
         )
-
 
     def dynamic_times(self, nmatmuls, max_cpu):
         """Augment compute dynamic_times with bandwidth-level variants and timing.

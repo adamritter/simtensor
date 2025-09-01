@@ -22,9 +22,14 @@ def verify_result(key, results, node):
 
     print(f"Running dynamic for {key}, value {results.get(key)}, extras {extras(key, results)}")
     print(f"    previous_key: {previous_key(key, results.get(key)[0])} = {results.get(previous_key(key, results.get(key)[0]))}")
-    out = run_dynamic(results, node, *tensors, out_level=out_level)
+    out = run_dynamic(results, node, *tensors, out_level=out_level, reset_counter=True)
     # Output shape should match trailing dims in the key
     assert out.sz == [out_dims[0], out_dims[1]]
+    if isinstance(node, Bandwidth):
+        node = node.cache
+    if isinstance(node, Cache):
+        node.free(out, allow_lower_level=True)
+    # Clear cache, reset counters:
 
     # Additionally verify that for all non-BinOpx rows, the previous_key exists.
     v = results.get(key)
