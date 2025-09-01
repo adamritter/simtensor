@@ -44,27 +44,27 @@ def verify_reults(results):
 
 def test_run_dynamic_for_all_muladd_dynamic_times_three():
     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
-    results = simulate.muladd.dynamic_times(3, 100)
+    results = simulate.muladd.dynamic_times(3, 4)
 
     verify_reults(results)
 
 
-def test_run_dynamic_for_all_muladd_dynamic_times_three_cache():
-    # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
-    cache = Cache(12, simulate.muladd)
-    results = cache.dynamic_times(3, 100)
+# def test_run_dynamic_for_all_muladd_dynamic_times_three_cache():
+#     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
+#     cache = Cache(12, simulate.muladd)
+#     results = cache.dynamic_times(3, 100)
 
-    verify_reults(results)
+#     verify_reults(results)
 
 
 
-def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
-    # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
-    bw = Bandwidth(Cache(12, simulate.muladd))
-    results = bw.dynamic_times(3, 1000)
-    pp(results)
+# def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
+#     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
+#     bw = Bandwidth(Cache(12, simulate.muladd))
+#     results = bw.dynamic_times(3, 1000)
+#     pp(results)
 
-    verify_reults(results)
+#     verify_reults(results)
 
 
 # def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():

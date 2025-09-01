@@ -317,6 +317,9 @@ class BinOpx:
 
         rec(0, k)
         return out
+    
+    def root_node(self):
+        return self
 
 
 class Cache:
@@ -335,6 +338,9 @@ class Cache:
         if isinstance(self.parent, Bandwidth):
             self.parentcache = self.parent.cache
             self.level = self.parentcache.level + 1
+
+    def root_node(self):
+        return self.parent.root_node()
 
     def alloc(self, tensor):
         """Mark tensor storage as resident; raises if capacity exceeded."""
@@ -692,6 +698,9 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
         for key, times in list(mapping.items()):
             self._dp_expand_key(key, times, mapping, level_here, max_cpu_time)
         return mapping
+    
+    def root_node(self):
+        return self.cache.root_node()
 
     def load(self, tensor):
         # Deep-copy into the child cache and account input
@@ -819,5 +828,20 @@ def reset_counters(cache):
         bw.time = 0
         c = bw.cache
     # Reset compute node time if present
-    if hasattr(c, 'parent') and hasattr(c.parent, 'time'):
+    if hasattr(c, 'parent') and isinstance(c.parent, BinOpx):
         c.parent.time = 0
+
+    if isinstance(c, BinOpx):
+        c.time = 0
+
+
+def get_counters(cache):
+    """
+    Get the list of counters for a cache hierarchy rooted at `cache`.
+    """
+    if isinstance(cache, BinOpx):
+        return [cache.time]
+    elif isinstance(cache, Bandwidth):
+        return get_counters(cache.cache.parent) + [cache.time]
+    else:
+        return get_counters(cache.parent)

@@ -3,7 +3,7 @@
 # limit time to 100 before running the simulator for now (a*b*c < 100, a*b*c+b*c*d < 100)
 
 # OK, now let's start with just the op (simple 2 powers):
-from simulator import Cache, Bandwidth, utilization, Tensor, reset_counters
+from simulator import Cache, Bandwidth, utilization, Tensor, reset_counters, get_counters
 from simulate import muladd, matmulsimple
 
 
@@ -43,14 +43,6 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
             raise ValueError("Incompatible chain shapes: {} vs {}".format(dims[-1], t.sz[0]))
         dims.append(t.sz[1])
 
-    # Construct keys used in dynamic maps
-    def make_key_from_dims(dims_):
-        flat = []
-        for i in range(len(dims_) - 1):
-            flat.extend([(dims_[i], dims_[i + 1]), 0])
-        flat.extend([(dims_[0], dims_[-1]), 0])
-        return tuple(flat)
-
     def make_key_from_tensors(dims_, tensors_, out_level):
         flat = []
         for i in range(len(dims_) - 1):
@@ -58,228 +50,41 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
         flat.extend([(dims_[0], dims_[-1]), out_level])
         return tuple(flat)
 
-    key_levels = make_key_from_tensors(dims, tensors, out_level)
-    entry = results.get(key_levels)
-    key = key_levels
-    # Fallback to canonical all-zero-levels key
+    key = make_key_from_tensors(dims, tensors, out_level)
+    entry = results.get(key)
     if entry is None:
-        key = make_key_from_dims(dims)
-        entry = results.get(key)
-    if entry is None:
-        # Attempt to find a matching entry ignoring the level markers
-        for k, v in results.items():
-            try:
-                shapes = [k[i] for i in range(0, len(k), 2)]
-            except Exception:
-                continue
-            want_shapes = [(dims[i], dims[i + 1]) for i in range(len(dims) - 1)] + [
-                (dims[0], dims[-1])
-            ]
-            if shapes == want_shapes:
-                key = k
-                entry = v
-                break
+        raise KeyError("No dynamic result found for key {}".format(key))
 
-    if entry is None:
-        raise KeyError("No dynamic result found for dims {}".format(dims))
-
-    # Determine entry type and expected CPU
-    algo = None
-    cpu_expected = None
-    bw_op = None
-    if isinstance(entry, list) and entry:
-        if isinstance(entry[0], str):
-            # e.g., ["BinOpx", cpu]
-            algo = entry[0]
-            cpu_expected = entry[1] if len(entry) > 1 else None
-        elif isinstance(entry[0], tuple):
-            # e.g., [("LDST", ...), cpu, bw]
-            bw_op = entry[0]
-            algo = bw_op[0]
-            cpu_expected = entry[1] if len(entry) > 1 else None
-        else:
-            # Back-compat: just a [cpu_time]
-            algo = "BinOpx"
-            cpu_expected = entry[0]
-
-    # Prepare an execution node depending on the algorithm. For bandwidth-level
-    # entries (LDST/DBL) we need a Cache above a Bandwidth link. If the provided
-    # `node` is just the compute BinOpx, synthesize a minimal two-level cache
-    # hierarchy so we can perform loads/stores and accumulate bandwidth time.
-    exec_node = node
-    operands_count = len(dims) - 1
-    # Parse the key we actually matched to recover operand/output levels
-    key_pairs = [(key[i], key[i + 1]) for i in range(0, len(key), 2)]
-    operand_levels = [lvl for (_shp, lvl) in key_pairs[:-1]]
-    out_pair = key_pairs[-1]
-    out_level_marker = out_pair[1]
-
-    if algo in ("LDST", "DBL") and not isinstance(node, Cache):
-        # Compute conservative capacities for the synthetic caches
-        def shape_elems(shp):
-            n = 1
-            for d in shp:
-                n *= d
-            return n
-        # High-level cache needs to hold any tensors marked at level 1 in the key
-        high_words = 0
-        for (shp, lvl) in key_pairs:
-            if isinstance(lvl, int) and lvl == 1:
-                high_words += shape_elems(shp)
-        if high_words == 0:
-            # Fallback: be generous
-            high_words = sum(shape_elems(shp) for (shp, _lvl) in key_pairs)
-        low_words = sum(shape_elems(shp) for (shp, _lvl) in key_pairs)
-        # Account for a transient extra buffer during chained multiplies: when
-        # we allocate the next intermediate before freeing the previous one,
-        # peak usage can exceed (inputs + final output) by up to the size of a
-        # single matrix. Reserve that headroom using the largest shape present
-        # in the key to avoid "Not enough memory" during LDST/DBL runs.
-        peak_extra = 0
-        for (shp, _lvl) in key_pairs:
-            words = shape_elems(shp)
-            if words > peak_extra:
-                peak_extra = words
-        # Build: BinOpx (node) <- Cache(low) <- Bandwidth <- Cache(high)
-        # Intermediate allocation can temporarily require holding two
-        # intermediates at once (previous out_low and newly allocated nxt)
-        # in addition to any loaded inputs. Reserve headroom for up to two
-        # such matrices using the largest shape observed to avoid transient
-        # overcommit during chained multiplies.
-        low_cache = Cache(max(1, low_words + 2 * peak_extra), node)
-        bw_link = Bandwidth(low_cache)
-        high_cache = Cache(max(1, max(high_words, low_words)), bw_link)
-        exec_node = high_cache
-
-        # Align tensor levels with the matched key so DBL/LDST selection works.
-        # Clamp any higher logical levels down to the actual cache level we
-        # synthesized. Dynamic tables from multi-link hierarchies can contain
-        # levels > exec_node.level; we execute with a single link here, so
-        # keep tensors at most at exec_node.level to ensure loads produce
-        # compute-level views with the expected levels.
-        exec_level = getattr(exec_node, 'level', 0)
-        for i in range(operands_count):
-            try:
-                lvl = operand_levels[i]
-                tensors[i].level = lvl if lvl <= exec_level else exec_level
-            except Exception:
-                pass
-        # If an accumulation tensor is provided, align its level as well with
-        # the same clamping behaviour.
-        if accumulate_output is not None and isinstance(out_level_marker, int):
-            try:
-                lvl = out_level_marker
-                accumulate_output.level = lvl if lvl <= exec_level else exec_level
-            except Exception:
-                pass
-
-    # Reset counters if requested (use the actual execution node)
     if reset_counter:
-        if isinstance(exec_node, Cache):
-            reset_counters(exec_node)
-        else:
-            if hasattr(exec_node, 'time'):
-                exec_node.time = 0
-    else:
-        # If we are not resetting and we're executing an LDST/DBL run without accumulation,
-        # adjust for a prior accumulation pass that loaded the output once.
-        if accumulate_output is None and isinstance(exec_node, Cache):
-            link = getattr(exec_node, 'parent', None)
-            if link is not None and hasattr(link, '_last_output_load_words') and getattr(link, '_last_output_load_words'):
-                try:
-                    link.input -= getattr(link, '_last_output_load_words')
-                except Exception:
-                    pass
+        reset_counters(node)
 
-    # Dispatch to specific runner implementations using exec_node
-    if algo == "BinOpx":
-        out = _run_dynamic_binopx(exec_node, tensors, accumulate_output)
-    elif algo == "LDST":
-        out = _run_dynamic_ldst(
-            exec_node,
-            tensors,
-            accumulate_output,
-            bw_op,
-            out_level_marker,
-            key=key,
-            results=results,
-        )
-    elif algo == "DBL":
-        # Pass through the matched key and op tag so the DBL runner can use
-        # previous_key to recover the predecessor entry and slice tensors
-        # correctly. Also pass the full results map so recursive calls can
-        # resolve the predecessor algorithm.
-        out = _run_dynamic_dbl(
-            exec_node,
-            tensors,
-            accumulate_output,
-            out_level_marker,
-            key,
-            bw_op,
-            results,
-        )
+    if entry[0] == "BinOpx":
+        # Just run it
+        out = _run_dynamic_binopx(node, tensors, accumulate_output)
+    elif entry[0][0] == "LDST":
+        out = _run_dynamic_ldst(node, tensors, accumulate_output, entry[1], out_level=out_level, key=key, results=results)
+    elif entry[0][0] == "DBL":
+        out = _run_dynamic_dbl(node, tensors, accumulate_output, entry[1], out_level=out_level, key=key, results=results)
     else:
-        raise NotImplementedError("Unsupported dynamic entry type: {}".format(algo))
+        raise NotImplementedError("Unsupported dynamic entry type: {}".format(entry[0]))
 
     # Verification (common)
     if reset_counter:
-        # CPU node depends on dispatch
-        if isinstance(exec_node, Cache):
-            comp_node = exec_node.parentcache.parent if hasattr(exec_node, 'parentcache') else None
-            link = getattr(exec_node, 'parent', None)
-        else:
-            comp_node = exec_node
-            link = None
-        if cpu_expected is not None and comp_node is not None:
-            if comp_node.time != cpu_expected:
-                raise AssertionError("CPU time mismatch: {} != {}".format(comp_node.time, cpu_expected))
-        # Bandwidth time
-        if isinstance(entry, list) and len(entry) == 3 and link is not None and hasattr(link, 'time'):
-            # Single-link case: entry is [(op,...), cpu, bw]. Validate bw.
-            bw_expected = entry[2]
-            # If we additionally loaded the output for accumulation, add its size
-            if accumulate_output is not None:
-                bw_expected += dims[0] * dims[-1]
-            if link.time != bw_expected:
-                raise AssertionError("Bandwidth time mismatch: {} != {}".format(link.time, bw_expected))
-
+        # get counter data:
+        counters = get_counters(node)
+        if counters != entry[1:]:
+            raise AssertionError("Counters mismatch: {} != {}".format(counters, entry[1:]))
     return out
 
 
 def _run_dynamic_binopx(node, tensors, accumulate_output):
-    # Compute left-associated chain using a single loop of matmulsimple calls
-    # Supports being invoked with either a compute BinOpx or a Cache sitting
-    # above a BinOpx. In the latter case, allocate intermediates in the child
-    # cache and call matmulsimple on the compute node.
-    if isinstance(node, Cache):
-        # Two cases:
-        # 1) node.parent is Bandwidth -> compute BinOpx is node.parentcache.parent
-        # 2) node.parent is BinOpx     -> compute BinOpx is node.parent
-        if hasattr(node, 'parentcache') and node.parentcache is not None:
-            comp_cache = node.parentcache
-            if not hasattr(comp_cache, 'parent'):
-                raise RuntimeError("Cannot locate compute node under cache for BinOpx execution")
-            comp_node = comp_cache.parent
-            cache_for_alloc = comp_cache
-        else:
-            # Directly above the compute node
-            if not hasattr(node, 'parent'):
-                raise RuntimeError("Cannot locate compute node under cache for BinOpx execution")
-            comp_node = node.parent
-            cache_for_alloc = node
-        clevel = getattr(comp_node, "clevel", 0)
-        alloc_fn = lambda r, c: cache_for_alloc.calloc(r, c)
-    else:
-        comp_node = node
-        clevel = getattr(node, "clevel", 0)
-        alloc_fn = lambda r, c: Tensor.zeros(r, c, level=clevel)
+    root_node = node.root_node()
 
     n_mats = len(tensors)
     if accumulate_output is not None:
         if accumulate_output.sz != [tensors[0].sz[0], tensors[-1].sz[1]]:
+            raise ValueError("accumulate_output shape mismatch: {} != {}".format(accumulate_output.sz, [tensors[0].sz[0], tensors[-1].sz[1]]))
             raise ValueError("accumulate_output shape mismatch")
-        if getattr(accumulate_output, 'level', clevel) != clevel:
-            raise ValueError("accumulate_output must reside at CPU level {}".format(clevel))
 
     left = tensors[0]
     out = None
@@ -289,16 +94,16 @@ def _run_dynamic_binopx(node, tensors, accumulate_output):
         if is_last and accumulate_output is not None:
             dest = accumulate_output
         else:
-            dest = alloc_fn(left.sz[0], right.sz[1])
+            dest = Tensor.zeros(left.sz[0], right.sz[1], level=0)
         if is_last:
             out = dest
-        matmulsimple(comp_node, left, right, dest)
+        matmulsimple(root_node, left, right, dest)
         left = dest
 
     return out
 
 
-def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=None, key=None, results=None):
+def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, key=None, results=None):
     """Execute one LDST step by loading listed operands, then running the
     predecessor dynamic entry using run_dynamic. This avoids re-implementing
     the matmul here and ensures consistent accounting.
@@ -336,16 +141,7 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=
     # Compute predecessor key and delegate to run_dynamic without resetting
     # counters so bandwidth inputs accumulate across LDST steps.
     if key is None:
-        # Reconstruct best-effort key from current tensors and node
-        dims = [tensors[0].sz[0], tensors[0].sz[1]]
-        for t in tensors[1:]:
-            dims.append(t.sz[1])
-        out_level = getattr(node, 'level', 0)
-        flat = []
-        for i in range(len(dims) - 1):
-            flat.extend([(dims[i], dims[i + 1]), getattr(tensors[i], 'level', 0)])
-        flat.extend([(dims[0], dims[-1]), out_level])
-        key = tuple(flat)
+        raise ValueError("_run_dynamic_ldst requires key")
 
     prev = previous_key(key, bw_op)
 
@@ -361,12 +157,7 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level_marker=
         accumulate_output=loaded_out,
     )
 
-    # If the dynamic key expects the output to reside at this (high) cache
-    # level, commit the low-level result back up. This accounts for the
-    # bandwidth time associated with writing the output across the link.
     target_high = False
-    if out_level_marker is not None:
-        target_high = isinstance(out_level_marker, int) and out_level_marker == getattr(node, 'level', 0)
     out_view = out_low
     if target_high:
         # Choose destination view: either reuse the provided high-level output
