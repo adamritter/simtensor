@@ -595,26 +595,41 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
             mapping[new_key] = [("DBL", tag), new_cpu] + new_bws
             return
         cur = mapping[new_key]
+        cur_cpu = cur[1]
         cur_bws = cur[2:]
 
-        if new_cpu != cur[1]:
-            raise Exception("new_cpu != cur_cpu")
+        # Allow differing CPU proposals: keep the minimum observed
+        min_cpu = new_cpu if new_cpu < cur_cpu else cur_cpu
 
         cur_max = max(cur_bws) if cur_bws else 0
         new_max = max(new_bws) if new_bws else 0
         best_bws = cur_bws if cur_max <= new_max else new_bws
 
-        # Only update the mapping if something improves
-        if best_bws is not cur_bws:
-            mapping[new_key] = [("DBL", tag), new_cpu] + best_bws
+        # Update if either CPU lowered or bandwidth improved
+        if min_cpu != cur_cpu or best_bws is not cur_bws:
+            mapping[new_key] = [("DBL", tag), min_cpu] + best_bws
 
     def _dp_expand_key(self, key, times, mapping, level_here, max_cpu_time):
         """Attempt DBL expansion for one key.
-        
-        For each legal position j in the chain where both adjacent operands are
-        at this bandwidth level, construct a new key with the shared dimension
-        doubled, scale cpu time proportionally, and compute bandwidth time. If
-        within the CPU budget, update the mapping."""
+
+        For each legal position j in the chain where adjacent operands are at
+        this bandwidth level, construct a new key with the relevant dimension
+        doubled and compute the timing for the expanded problem.
+
+        CPU model for DBL (chain splitting):
+        - Treat DBL as executing two predecessor subproblems (halves) whose
+          total compute equals 2x the predecessor CPU time, independent of the
+          proportional change in naive matmul FLOPs. This matches the execution
+          scheme where the chain is split and each half is computed separately
+          (accumulating if interior), which yields cur_cpu = 2*prev_cpu.
+
+        Bandwidth model:
+        - Double all predecessor bandwidth times for this link.
+        - Additionally, for interior splits (0 < j < n) where the output is at
+          this link level, account for one extra traversal of the full output
+          words.
+
+        Only insert entries that do not exceed `max_cpu_time`."""
         ops, outp = self._dp_split_key(key)
         if len(ops) < 2:
             return
@@ -654,8 +669,7 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
                 new_ops_list[j - 1] = ((a0, a1 * 2), alvl)
                 new_ops_list[j] = ((b0 * 2, b1), blvl)
 
-            new_ops = self._dp_ops_count(new_ops_list)
-            new_cpu =  int(cur_cpu * new_ops / old_ops)
+            new_cpu = cur_cpu * 2
             if new_cpu > max_cpu_time:
                 continue
 

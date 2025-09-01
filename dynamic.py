@@ -656,13 +656,13 @@ def pp(results):
             print(f"{k}: {v} | util={util:.3f}")
         else:
             print(f"{k}: {v} | util={util:.3f} | extras={extra}")                   
-
+        print(f"    previous_key: {previous_key(k, v[0])} = {results.get(previous_key(k, v[0]))}")
 
 
 if __name__ == "__main__":
     cache = Cache(12, muladd)
     bw = Bandwidth(cache)
-    results = bw.dynamic_times(2, 8)
+    results = bw.dynamic_times(3, 8)
     pp(results)
 
 
