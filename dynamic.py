@@ -151,10 +151,15 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
     )
 
     if accumulate_output is None:
-        out_high = node.calloc(out_low.sz[0], out_low.sz[1])
+        if out_level != out_low.level:
+            out_high = node.calloc(out_low.sz[0], out_low.sz[1])
+            node.store_to(out_low, out_high)
+        else:
+            out_high = out_low
     else:
         out_high = accumulate_output
-    node.store_to(out_low, out_high)
+        if len(tensors) in bw_op:
+            node.store_to(out_low, out_high)
 
     for i in bw_op:
         if i < len(loaded):

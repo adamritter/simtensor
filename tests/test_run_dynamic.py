@@ -63,6 +63,7 @@ def test_run_dynamic_ldst_two_and_counters():
 
     # Run once with counter reset
     out = run_dynamic(results, L1, A, B, out_level=0, reset_counter=True)
+    out = run_dynamic(results, L1, A, B, out_level=1, reset_counter=True)
     assert out.sz == [2, 2]
     # CPU ops
     assert node.time == 2 * 2 * 2
