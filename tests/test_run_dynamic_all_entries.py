@@ -21,6 +21,7 @@ def verify_result(key, results):
     tensors = [Tensor.zeros(shp[0], shp[1], level=0) for shp, _lvl in operand_pairs]
 
     print(f"Running dynamic for {key}, value {results.get(key)}, extras {extras(key, results)}")
+    print(f"    previous_key: {previous_key(key, results.get(key)[0])} = {results.get(previous_key(key, results.get(key)[0]))}")
     out = run_dynamic(results, simulate.muladd, *tensors)
     # Output shape should match trailing dims in the key
     assert out.sz == [out_dims[0], out_dims[1]]
@@ -60,7 +61,7 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three_cache():
 def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
     bw = Bandwidth(Cache(12, simulate.muladd))
-    results = bw.dynamic_times(3, 6)
+    results = bw.dynamic_times(3, 1000)
     pp(results)
 
     verify_reults(results)
