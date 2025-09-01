@@ -207,7 +207,8 @@ class BinOpx:
     def __repr__(self):
         return f"<BinOpx time: {self.time}>"
 
-
+    def load(self, tensor):
+        return tensor  # no-op for BinOpx
 
 
     def dynamic_times(self, *args):
@@ -347,8 +348,10 @@ class Cache:
     def root_node(self):
         return self.parent.root_node()
 
-    def alloc(self, tensor):
+    def alloc(self, tensor, allow_lower_level=False):
         """Mark tensor storage as resident; raises if capacity exceeded."""
+        if allow_lower_level and tensor.level < self.level:
+            return self.parentcache.alloc(tensor, allow_lower_level)
         if tensor.uid in self.datas:
             raise Exception("Data already in cache: ", tensor.data)
         self.used += tensor.size()
@@ -363,6 +366,8 @@ class Cache:
             return self.parentcache.free(tensor, allow_lower_level)
         if tensor.level != self.level:
             raise Exception("Tensor level doesn't match cache level")
+        if tensor.uid not in self.datas:
+            raise Exception("Free: Tensor not found in cache: ", tensor.data, " for tensor ", tensor, " in cache ", self)
         self.datas.remove(tensor.uid)
         self.used -= tensor.size()
 
@@ -511,6 +516,11 @@ class Bandwidth:
         self.time = 0  # aggregate transfer time in 'clocks'
         # No resident-tracking by default
         self._resident = None
+    
+    def free(self, tensor, allow_lower_level=False):
+        if not allow_lower_level:
+            raise Exception("Bandwidth.free does not support allow_lower_level=False")
+        self.cache.free(tensor, allow_lower_level)
 
     def _update_time(self):
         if self.output_clocks_per_word is None:

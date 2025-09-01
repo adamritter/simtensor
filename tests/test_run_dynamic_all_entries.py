@@ -7,7 +7,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import simulate
-from simulator import Tensor, Cache, Bandwidth
+from simulator import Tensor, Cache, Bandwidth, BinOpx
 from dynamic import run_dynamic, pp, previous_key, extras
 
 
@@ -19,6 +19,9 @@ def verify_result(key, results, node):
 
     # Build input tensors at level 0 for each operand shape
     tensors = [Tensor.zeros(shp[0], shp[1], level=lvl) for shp, lvl in operand_pairs]
+    if not isinstance(node, BinOpx):
+        node2 = node.cache if isinstance(node, Bandwidth) else node
+        tensors = [node2.alloc(t, allow_lower_level=True) for t in tensors]
 
     print(f"Running dynamic for {key}, value {results.get(key)}, extras {extras(key, results)}")
     print(f"    previous_key: {previous_key(key, results.get(key)[0])} = {results.get(previous_key(key, results.get(key)[0]))}")
@@ -29,7 +32,9 @@ def verify_result(key, results, node):
         node = node.cache
     if isinstance(node, Cache):
         node.free(out, allow_lower_level=True)
-    # Clear cache, reset counters:
+    for t in tensors:
+        if not isinstance(node, BinOpx):
+            node.free(t, allow_lower_level=True)
 
     # Additionally verify that for all non-BinOpx rows, the previous_key exists.
     v = results.get(key)
@@ -57,19 +62,18 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three():
 def test_run_dynamic_for_all_muladd_dynamic_times_three_cache():
     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
     cache = Cache(12, simulate.muladd)
-    results = cache.dynamic_times(3, 100)
-
+    results = cache.dynamic_times(3, 1000)
     verify_results(results, cache)
 
 
 
-# def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
-#     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
-#     bw = Bandwidth(Cache(12, simulate.muladd))
-#     results = bw.dynamic_times(3, 1000)
-#     pp(results)
+def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
+    # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
+    bw = Bandwidth(Cache(12, simulate.muladd))
+    results = bw.dynamic_times(2, 4)
+    pp(results)
 
-#     verify_results(results, bw)
+    verify_results(results, bw)
 
 
 # def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():

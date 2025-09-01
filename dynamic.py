@@ -5,6 +5,8 @@
 # OK, now let's start with just the op (simple 2 powers):
 from simulator import Cache, Bandwidth, utilization, Tensor, reset_counters, get_counters
 from simulate import muladd, matmulsimple
+import os
+DEBUG = int(os.environ.get("DEBUG", 0))
 
 
 def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, accumulate_output=None):
@@ -31,8 +33,13 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
     Returns:
         simulator.Tensor: the final output tensor
     """
+    if node is None:
+        raise Exception("Node is None")
     if len(tensors) < 2:
         raise ValueError("run_dynamic requires at least two tensors")
+
+    if DEBUG > 0:
+        print("run_dynamic: ", node, tensors, out_level, reset_counter, accumulate_output)
 
     # Build dims list [d0, d1, d2, ...] from input tensors of shapes (d0,d1),(d1,d2),...
     dims = [tensors[0].sz[0], tensors[0].sz[1]]
@@ -57,6 +64,7 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
 
     if reset_counter:
         reset_counters(node)
+    
     orig_counter = get_counters(node)
     if entry[0] == "BinOpx":
         # Just run it
@@ -70,7 +78,13 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
 
     counters = get_counters(node)
     # decrement counters by orig_counter
+    while len(counters) < len(orig_counter):
+        counters.append(0)
+    while len(orig_counter) < len(counters):
+        orig_counter.append(0)
     counters = [counters[i] - orig_counter[i] for i in range(len(counters))]
+    while len(counters) > len(entry[1:]) and counters[-1] == 0:
+        counters.pop()
     if counters != entry[1:]:
         raise AssertionError("Counters mismatch: {} != {}, key: {}, entry: {}".format(counters, entry[1:], key, entry))
     return out
@@ -88,6 +102,8 @@ def _run_dynamic_binopx(node, tensors, accumulate_output):
     # Locate the highest Cache ancestor (if any) of the provided node.
     highest_cache = None
     cur = node
+    if isinstance(cur, Bandwidth):
+        cur = cur.cache
     while cur is not None:
         if isinstance(cur, Cache):
             highest_cache = cur
@@ -130,10 +146,8 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
     predecessor dynamic entry using run_dynamic. This avoids re-implementing
     the matmul here and ensures consistent accounting.
     """
-    if isinstance(node, Bandwidth):
-        node = node.cache
-    if not isinstance(node, Cache):
-        raise TypeError("LDST execution requires a Cache node for load/store, type is ", type(node))
+    if not isinstance(node, Bandwidth) and not isinstance(node, Cache):
+        raise TypeError("LDST execution requires a Bandwidth or Cache node for load/store, type is ", type(node))
 
     # Load selected operands down one level
     loaded = list(tensors).copy()
@@ -145,9 +159,11 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
     if loaded_out and len(tensors) in bw_op:
         loaded_out = node.load(accumulate_output)
 
+    run_node = node.cache.parent if isinstance(node, Bandwidth) else node.parent
+
     out_low = run_dynamic(
         results,
-        node.parentcache,
+        run_node,
         *loaded,
         reset_counter=False,
         accumulate_output=loaded_out,
@@ -167,7 +183,7 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
 
     for i in bw_op:
         if i < len(loaded):
-            node.parentcache.free(loaded[i])
+            node.free(loaded[i], allow_lower_level=True)
 
     return out_high
 
