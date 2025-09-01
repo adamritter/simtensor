@@ -7,7 +7,7 @@ from simulator import Cache, Bandwidth, utilization, Tensor, reset_counters
 from simulate import muladd, matmulsimple
 
 
-def run_dynamic(results, node, *tensors, reset_counter=True, accumulate_output=None):
+def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, accumulate_output=None):
     """
     Execute a matrix-chain multiplication using the algorithm indicated by a
     precomputed dynamic result entry.
@@ -58,8 +58,6 @@ def run_dynamic(results, node, *tensors, reset_counter=True, accumulate_output=N
         flat.extend([(dims_[0], dims_[-1]), out_level])
         return tuple(flat)
 
-    # Prefer a key that encodes current tensor levels (to capture LDST variants)
-    out_level = getattr(node, 'level', 0)
     key_levels = make_key_from_tensors(dims, tensors, out_level)
     entry = results.get(key_levels)
     key = key_levels
@@ -583,16 +581,7 @@ def previous_key(key, op=None):
                         flat.extend([shp, lvl])
                     flat.extend([new_out[0], new_out[1]])
                     return tuple(flat)
-    # Fallback: decrease all integer level markers
-    kl = list(key)
-    for i in range(1, len(kl), 2):
-        lvl = kl[i]
-        if isinstance(lvl, int):
-            nlvl = lvl - 1
-            if nlvl < 0:
-                nlvl = 0
-            kl[i] = nlvl
-    return tuple(kl)
+    return None
 
 
 def extras(key, results):
