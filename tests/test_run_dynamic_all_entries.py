@@ -15,14 +15,14 @@ def verify_result(key, results):
     # Key is alternating (shape, level); last pair is output dims
     pairs = [(key[i], key[i + 1]) for i in range(0, len(key), 2)]
     operand_pairs = pairs[:-1]
-    out_dims, _out_level = pairs[-1]
+    out_dims, out_level = pairs[-1]
 
     # Build input tensors at level 0 for each operand shape
-    tensors = [Tensor.zeros(shp[0], shp[1], level=0) for shp, _lvl in operand_pairs]
+    tensors = [Tensor.zeros(shp[0], shp[1], level=lvl) for shp, lvl in operand_pairs]
 
     print(f"Running dynamic for {key}, value {results.get(key)}, extras {extras(key, results)}")
     print(f"    previous_key: {previous_key(key, results.get(key)[0])} = {results.get(previous_key(key, results.get(key)[0]))}")
-    out = run_dynamic(results, simulate.muladd, *tensors)
+    out = run_dynamic(results, simulate.muladd, *tensors, out_level=out_level)
     # Output shape should match trailing dims in the key
     assert out.sz == [out_dims[0], out_dims[1]]
 
