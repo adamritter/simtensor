@@ -161,14 +161,9 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
     if loaded_out and len(tensors) in bw_op:
         loaded_out = node.load(accumulate_output, allow_lower_level=True)
 
-    # Run the predecessor at the cache just below the current bandwidth/cache
-    # level so that any final outputs can be allocated inside a cache and be
-    # visible to cachecontains checks.
-    run_node = node.cache if isinstance(node, Bandwidth) else node
-
     out_low = run_dynamic(
         results,
-        run_node,
+        node,
         *loaded,
         reset_counter=False,
         accumulate_output=loaded_out,
