@@ -57,7 +57,7 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
 
     if reset_counter:
         reset_counters(node)
-
+    orig_counter = get_counters(node)
     if entry[0] == "BinOpx":
         # Just run it
         out = _run_dynamic_binopx(node, tensors, accumulate_output)
@@ -68,12 +68,11 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
     else:
         raise NotImplementedError("Unsupported dynamic entry type: {}".format(entry[0]))
 
-    # Verification (common)
-    if reset_counter:
-        # get counter data:
-        counters = get_counters(node)
-        if counters != entry[1:]:
-            raise AssertionError("Counters mismatch: {} != {}".format(counters, entry[1:]))
+    counters = get_counters(node)
+    # decrement counters by orig_counter
+    counters = [counters[i] - orig_counter[i] for i in range(len(counters))]
+    if counters != entry[1:]:
+        raise AssertionError("Counters mismatch: {} != {}, key: {}, entry: {}".format(counters, entry[1:], key, entry))
     return out
 
 
@@ -86,14 +85,33 @@ def _run_dynamic_binopx(node, tensors, accumulate_output):
             raise ValueError("accumulate_output shape mismatch: {} != {}".format(accumulate_output.sz, [tensors[0].sz[0], tensors[-1].sz[1]]))
             raise ValueError("accumulate_output shape mismatch")
 
+    # Locate the highest Cache ancestor (if any) of the provided node.
+    highest_cache = None
+    cur = node
+    while cur is not None:
+        if isinstance(cur, Cache):
+            highest_cache = cur
+        cur = getattr(cur, "parentcache", None)
+
     left = tensors[0]
     out = None
     for i in range(1, n_mats):
         right = tensors[i]
         is_last = (i == n_mats - 1)
-        if is_last and accumulate_output is not None:
-            dest = accumulate_output
+        if is_last:
+            if accumulate_output is not None:
+                # Use the caller‑supplied output tensor.
+                dest = accumulate_output
+            else:
+                # Allocate the output in the highest cache if one exists;
+                # otherwise fall back to a plain Tensor allocation.
+                if highest_cache is not None:
+                    dest = highest_cache.calloc(left.sz[0], right.sz[1])
+                else:
+                    # No cache in the hierarchy (pure BinOp tree).
+                    dest = Tensor.zeros(left.sz[0], right.sz[1], level=0)
         else:
+            # For intermediate results we still allocate at level‑0.
             dest = Tensor.zeros(left.sz[0], right.sz[1], level=0)
         if is_last:
             out = dest

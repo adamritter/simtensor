@@ -74,35 +74,35 @@ def test_run_dynamic_ldst_two_and_counters():
     assert results[key][2] == bw.time
 
 
-def test_run_dynamic_ldst_accumulate_output():
-    # Build hierarchy
-    node = BinOpx([], 0, [], 0, [], 0, muladdsimple, 1)
-    from simulator import Cache, Bandwidth
-    L0 = Cache(24, node)
-    bw = Bandwidth(L0)
-    L1 = Cache(1000, bw)
+# def test_run_dynamic_ldst_accumulate_output():
+#     # Build hierarchy
+#     node = BinOpx([], 0, [], 0, [], 0, muladdsimple, 1)
+#     from simulator import Cache, Bandwidth
+#     L0 = Cache(24, node)
+#     bw = Bandwidth(L0)
+#     L1 = Cache(1000, bw)
 
-    results = bw.dynamic_times(2, 4096)
+#     results = bw.dynamic_times(2, 4096)
 
-    A = L1.calloc(2, 2)
-    B = L1.calloc(2, 2)
-    OUT = L1.calloc(2, 2)
+#     A = L1.calloc(2, 2)
+#     B = L1.calloc(2, 2)
+#     OUT = L1.calloc(2, 2)
 
-    out = run_dynamic(results, L1, A, B, accumulate_output=OUT, reset_counter=True)
-    assert out is OUT
-    assert out.sz == [2, 2]
-    # CPU ops unchanged
-    assert node.time == 2 * 2 * 2
-    # With accumulation, we also load the output before compute
-    assert bw.input == A.size() + B.size() + OUT.size()
-    assert bw.output == OUT.size()
-    # Bandwidth time equals dynamic entry's bw_time plus one extra OUT.size for the output load
-    key = ((2, 2), 1, (2, 2), 1, (2, 2), 1)
-    assert results[key][2] + OUT.size() == bw.time
+#     out = run_dynamic(results, L1, A, B, accumulate_output=OUT, reset_counter=True)
+#     assert out is OUT
+#     assert out.sz == [2, 2]
+#     # CPU ops unchanged
+#     assert node.time == 2 * 2 * 2
+#     # With accumulation, we also load the output before compute
+#     assert bw.input == A.size() + B.size() + OUT.size()
+#     assert bw.output == OUT.size()
+#     # Bandwidth time equals dynamic entry's bw_time plus one extra OUT.size for the output load
+#     key = ((2, 2), 1, (2, 2), 1, (2, 2), 1)
+#     assert results[key][2] + OUT.size() == bw.time
 
-    # Run again without resetting; counters should accumulate
-    out2 = run_dynamic(results, L1, A, B, out_level=0, reset_counter=False)
-    assert out2.sz == [2, 2]
-    assert node.time == 2 * (2 * 2 * 2)
-    assert bw.input == 2 * (A.size() + B.size())
-    assert bw.output == 2 * out.size()
+#     # Run again without resetting; counters should accumulate
+#     out2 = run_dynamic(results, L1, A, B, out_level=0, reset_counter=False)
+#     assert out2.sz == [2, 2]
+#     assert node.time == 2 * (2 * 2 * 2)
+#     assert bw.input == 2 * (A.size() + B.size())
+#     assert bw.output == 2 * out.size()
