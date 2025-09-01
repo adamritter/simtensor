@@ -87,6 +87,8 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
         counters.pop()
     if counters != entry[1:]:
         raise AssertionError("Counters mismatch: {} != {}, key: {}, entry: {}".format(counters, entry[1:], key, entry))
+    if isinstance(node, Bandwidth) or isinstance(node, Cache):
+        assert node.cachecontains(out, allow_lower_level=True), "Output tensor not in cache: " + str(out)  + " for key: " + str(key) + ", value: " + str(entry)+ ", accumulate_output: " + str(accumulate_output)+ ", in " + str(node)
     return out
 
 
@@ -153,11 +155,11 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
     loaded = list(tensors).copy()
     for i in bw_op:
         if i < len(loaded):
-            loaded[i] = node.load(tensors[i])
+            loaded[i] = node.load(tensors[i], allow_lower_level=True)
     
     loaded_out = accumulate_output
     if loaded_out and len(tensors) in bw_op:
-        loaded_out = node.load(accumulate_output)
+        loaded_out = node.load(accumulate_output, allow_lower_level=True)
 
     run_node = node.cache.parent if isinstance(node, Bandwidth) else node.parent
 
@@ -172,14 +174,14 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
 
     if accumulate_output is None:
         if out_level != out_low.level:
-            out_high = node.calloc(out_low.sz[0], out_low.sz[1])
-            node.store_to(out_low, out_high)
+            out_high = node.calloc(out_low.sz[0], out_low.sz[1], level=out_level)
+            node.store_to(out_low, out_high, allow_lower_level=True)
         else:
             out_high = out_low
     else:
         out_high = accumulate_output
         if len(tensors) in bw_op:
-            node.store_to(out_low, out_high)
+            node.store_to(out_low, out_high, allow_lower_level=True)
 
     for i in bw_op:
         if i < len(loaded):

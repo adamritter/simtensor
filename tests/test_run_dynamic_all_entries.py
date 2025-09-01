@@ -7,7 +7,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import simulate
-from simulator import Tensor, Cache, Bandwidth, BinOpx
+from simulator import Tensor, Cache, Bandwidth
 from dynamic import run_dynamic, pp, previous_key, extras
 
 
@@ -19,21 +19,18 @@ def verify_result(key, results, node):
 
     # Build input tensors at level 0 for each operand shape
     tensors = [Tensor.zeros(shp[0], shp[1], level=lvl) for shp, lvl in operand_pairs]
-    if not isinstance(node, BinOpx):
-        node2 = node.cache if isinstance(node, Bandwidth) else node
-        tensors = [node2.alloc(t, allow_lower_level=True) for t in tensors]
+    if isinstance(node, Cache) or isinstance(node, Bandwidth):
+        tensors = [node.alloc(t, allow_lower_level=True) for t in tensors]
 
     print(f"Running dynamic for {key}, value {results.get(key)}, extras {extras(key, results)}")
     print(f"    previous_key: {previous_key(key, results.get(key)[0])} = {results.get(previous_key(key, results.get(key)[0]))}")
     out = run_dynamic(results, node, *tensors, out_level=out_level, reset_counter=True)
     # Output shape should match trailing dims in the key
     assert out.sz == [out_dims[0], out_dims[1]]
-    if isinstance(node, Bandwidth):
-        node = node.cache
-    if isinstance(node, Cache):
+    if isinstance(node, Cache) or isinstance(node, Bandwidth):
         node.free(out, allow_lower_level=True)
     for t in tensors:
-        if not isinstance(node, BinOpx):
+        if isinstance(node, Cache) or isinstance(node, Bandwidth):
             node.free(t, allow_lower_level=True)
 
     # Additionally verify that for all non-BinOpx rows, the previous_key exists.

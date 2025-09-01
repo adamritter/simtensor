@@ -371,6 +371,7 @@ class Cache:
         self.datas.remove(tensor.uid)
         self.used -= tensor.size()
 
+
     def run(self, op, *args):
         """Run an op with tensors that must be resident at this level."""
         for arg in args:
@@ -378,11 +379,11 @@ class Cache:
                 raise Exception("Data not found in cache: ", arg.data, " for tensor ", arg)
         return op(self.parent, *args)
 
-    def load(self, m):
+    def load(self, m, allow_lower_level=False):
         """Move a view one level down; updates bandwidth input and residency."""
-        if m.uid not in self.datas:
+        if m.uid not in self.datas and (not allow_lower_level or m.level > self.level):
             raise Exception("Data not found in cache during load: ", m.data, " for tensor ", m)
-        return self.parent.load(m)
+        return self.parent.load(m, allow_lower_level)
 
     def store(self, m):
         """Move a view one level up; updates bandwidth output and parent alloc."""
@@ -391,7 +392,7 @@ class Cache:
             raise Exception("Tensor levels don't match")
         self.alloc(m2)
     
-    def store_to(self, src, dst):
+    def store_to(self, src, dst, allow_lower_level=False):
         """
         Store data from a one-level-lower tensor `src` into an existing
         destination view `dst` that already resides in this cache.
@@ -414,6 +415,8 @@ class Cache:
 
         # Validate levels
         if src.level != self.level - 1:
+            if allow_lower_level:
+                return self.parent.store_to(src, dst, allow_lower_level)
             raise Exception("Source tensor must be exactly one level below destination cache")
         if dst.level != self.level:
             raise Exception("Destination tensor level must match this cache level")
@@ -455,7 +458,9 @@ class Cache:
                 data.append(i==j)
         return self.alloc(Tensor(data, self.level, [n, n]))
 
-    def calloc(self, n, m):
+    def calloc(self, n, m, level=None):
+        if level is not None and level != self.level:
+            return self.parent.calloc(n, m, level)
         data = []
         for i in range(n):
             for j in range(m):
@@ -494,6 +499,14 @@ class Cache:
             if total <= self.size:
                 out[key] = v
         return out
+    
+    def cachecontains(self, tensor, allow_lower_level=False):
+        if tensor.level == self.level:
+            return tensor.uid in self.datas
+        if not allow_lower_level:
+            raise Exception("Cache.cachecontains does not support allow_lower_level=False")
+        return self.parentcache.cachecontains(tensor, allow_lower_level)
+
 class Bandwidth:
     """Bandwidth link between caches with simple timing model.
 
@@ -518,9 +531,25 @@ class Bandwidth:
         self._resident = None
     
     def free(self, tensor, allow_lower_level=False):
+        if tensor.level == self.cache.level + 1:
+            return tensor # Noop
         if not allow_lower_level:
             raise Exception("Bandwidth.free does not support allow_lower_level=False")
-        self.cache.free(tensor, allow_lower_level)
+        return self.cache.free(tensor, allow_lower_level)
+
+    def alloc(self, tensor, allow_lower_level=False):
+        if tensor.level == self.cache.level + 1:
+            return tensor # Noop
+        if not allow_lower_level:
+            raise Exception("Bandwidth.alloc does not support allow_lower_level=False")
+        return self.cache.alloc(tensor, allow_lower_level)
+    
+    def cachecontains(self, tensor, allow_lower_level=False):
+        if tensor.level == self.cache.level + 1:
+            return True # Noop
+        if not allow_lower_level:
+            raise Exception("Bandwidth.cachecontains does not support allow_lower_level=False")
+        return self.cache.cachecontains(tensor, allow_lower_level)
 
     def _update_time(self):
         if self.output_clocks_per_word is None:
@@ -721,7 +750,9 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
     def root_node(self):
         return self.cache.root_node()
 
-    def load(self, tensor):
+    def load(self, tensor, allow_lower_level=False):
+        if allow_lower_level and tensor.level <= self.cache.level:
+            return self.cache.load(tensor, allow_lower_level)
         # Deep-copy into the child cache and account input
         t2 = copy.deepcopy(tensor)
         global lastid
