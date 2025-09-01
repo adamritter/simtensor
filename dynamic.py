@@ -129,7 +129,7 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
     if isinstance(node, Bandwidth):
         node = node.cache
     if not isinstance(node, Cache):
-        raise TypeError("LDST execution requires a Cache node for load/store")
+        raise TypeError("LDST execution requires a Cache node for load/store, type is ", type(node))
 
     # Load selected operands down one level
     loaded = list(tensors).copy()

@@ -11,7 +11,7 @@ from simulator import Tensor, Cache, Bandwidth
 from dynamic import run_dynamic, pp, previous_key, extras
 
 
-def verify_result(key, results):
+def verify_result(key, results, node):
     # Key is alternating (shape, level); last pair is output dims
     pairs = [(key[i], key[i + 1]) for i in range(0, len(key), 2)]
     operand_pairs = pairs[:-1]
@@ -37,34 +37,34 @@ def verify_result(key, results):
             assert pk in results, f"previous_key missing for {key} with op {head} -> {pk}"
 
 
-def verify_reults(results):
+def verify_results(results, node):
     for key in results.keys():
-        verify_result(key, results)
+        verify_result(key, results, node)
 
 
 def test_run_dynamic_for_all_muladd_dynamic_times_three():
     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
-    results = simulate.muladd.dynamic_times(3, 4)
+    results = simulate.muladd.dynamic_times(3, 100)
 
-    verify_reults(results)
-
-
-# def test_run_dynamic_for_all_muladd_dynamic_times_three_cache():
-#     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
-#     cache = Cache(12, simulate.muladd)
-#     results = cache.dynamic_times(3, 100)
-
-#     verify_reults(results)
+    verify_results(results, simulate.muladd)
 
 
+def test_run_dynamic_for_all_muladd_dynamic_times_three_cache():
+    # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
+    cache = Cache(12, simulate.muladd)
+    results = cache.dynamic_times(3, 100)
 
-# def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
-#     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
-#     bw = Bandwidth(Cache(12, simulate.muladd))
-#     results = bw.dynamic_times(3, 1000)
-#     pp(results)
+    verify_results(results, cache)
 
-#     verify_reults(results)
+
+
+def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
+    # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
+    bw = Bandwidth(Cache(12, simulate.muladd))
+    results = bw.dynamic_times(3, 1000)
+    pp(results)
+
+    verify_results(results, bw)
 
 
 # def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
@@ -74,7 +74,7 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three():
 #     pp(results)
 #     assert len(results) == 653
 
-#     verify_reults(results)
+#     verify_results(results)
 
 
 # def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth2():
@@ -84,4 +84,4 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three():
 #     #assert len(results) == 4394
 #     pp(results)
 
-#     verify_reults(results)
+#     verify_results(results)
