@@ -327,7 +327,6 @@ class BinOpx:
     def root_node(self):
         return self
 
-
 class Cache:
     """A cache level with capacity and residency accounting.
 

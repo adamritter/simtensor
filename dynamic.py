@@ -174,15 +174,9 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
         out_level=out_level-1 if (len(tensors) in bw_op) else out_level
     )
 
-    # If the caller did not specify an explicit output level, default to the
-    # parent level of ``out_low`` so that ``store_to`` moves data across a
-    # valid Bandwidth (parent/child) pair. Using the same level for both
-    # tensors would violate the `store_to` pre‑condition and raise
-    # "store_to requires a parent Bandwidth and child Cache".
     if accumulate_output is None:
-        target_level = out_level if out_level is not None else (out_low.level + 1)
-        if target_level != out_low.level:
-            out_high = node.calloc(out_low.sz[0], out_low.sz[1], level=target_level)
+        if out_level != out_low.level:
+            out_high = node.calloc(out_low.sz[0], out_low.sz[1], level=out_level)
             node.store_to(out_low, out_high, allow_lower_level=True)
         else:
             out_high = out_low
@@ -204,16 +198,17 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
     m = len(tensors)
     rows, cols = tensors[0].sz[0], tensors[-1].sz[1]
     out = accumulate_output
-    if out is None:
-        if isinstance(node, (Cache, Bandwidth)) and out_level is not None:
-            out = node.calloc(rows, cols, level=out_level)
-        else:
-            out = Tensor.zeros(rows, cols, level=0)
+    # if out is None:
+    #     if isinstance(node, (Cache, Bandwidth)) and out_level is not None:
+    #         out = node.calloc(rows, cols, level=out_level)
+    #     else:
+    #         out = Tensor.zeros(rows, cols, level=0)
 
     ops1 = list(tensors)
     ops2 = list(tensors)
 
     if j == 0:
+        out = node.calloc(rows, cols, level=out_level)
         # Split rows of the first operand; write directly into row slices of `out`.
         h = rows // 2
         ops1[0] = tensors[0][0:h, :]
@@ -237,66 +232,37 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
             out_level=out_level,
         )
     elif j == m:
-        # Split columns of the last operand. Reuse the left prefix once to
-        # match DP CPU semantics (compute A..@B once, then multiply by each
-        # column-slice of the last operand).
+        out = node.calloc(rows, cols, level=out_level)
+        # Split columns of the last operand; write directly into column slices of `out`.
         h = cols // 2
-        # 1) Compute the left prefix T = tensors[0] @ ... @ tensors[-2]
-        prefix = tensors[:-1]
-        T = run_dynamic(
+        ops1[-1] = tensors[-1][:, 0:h]
+        ops2[-1] = tensors[-1][:, h:2 * h]
+        run_dynamic(
             results,
             node,
-            *prefix,
+            *ops1,
             reset_counter=False,
-            accumulate_output=None,
+            accumulate_output=out[:, 0:h],
             out_level=out_level,
         )
-        try:
-            # 2) Multiply T by left and right column halves into out slices
-            left_last = tensors[-1][:, 0:h]
-            right_last = tensors[-1][:, h:2 * h]
-            run_dynamic(
-                results,
-                node,
-                T,
-                left_last,
-                reset_counter=False,
-                accumulate_output=out[:, 0:h],
-                out_level=out_level,
-            )
-            run_dynamic(
-                results,
-                node,
-                T,
-                right_last,
-                reset_counter=False,
-                accumulate_output=out[:, h:2 * h],
-                out_level=out_level,
-            )
-        finally:
-            # Free the temporary prefix if managed by a cache/bandwidth node
-            if isinstance(node, (Cache, Bandwidth)):
-                try:
-                    node.free(T, allow_lower_level=True)
-                except Exception:
-                    pass
+        run_dynamic(
+            results,
+            node,
+            *ops2,
+            reset_counter=False,
+            accumulate_output=out[:, h:2 * h],
+            out_level=out_level,
+        )
     else:
         h = tensors[j].sz[0] // 2
         ops1[j - 1] = tensors[j - 1][:, 0:h]
         ops1[j] = tensors[j][0:h, :]
         ops2[j - 1] = tensors[j - 1][:, h:2 * h]
         ops2[j] = tensors[j][h:2 * h, :]
-        run_dynamic(results, node, *ops1, reset_counter=False, accumulate_output=out, out_level=out_level)
-        # Interior split: DP adds one extra full-output traversal at this link
-        # to account for reusing/accumulating into the same output. Model this
-        # by performing a single load of the current output into the child
-        # cache (and immediately freeing it) when operating at a bandwidth link.
-        if isinstance(node, Bandwidth) and out_level is not None and out.level == out_level:
-            try:
-                tmp_out = node.load(out, allow_lower_level=True)
-                node.free(tmp_out, allow_lower_level=True)
-            except Exception:
-                pass
+        if accumulate_output is None:
+            out = run_dynamic(results, node, *ops1, reset_counter=False, out_level=out_level)
+        else:
+            run_dynamic(results, node, *ops1, reset_counter=False, accumulate_output=out, out_level=out_level)
         run_dynamic(results, node, *ops2, reset_counter=False, accumulate_output=out, out_level=out_level)
 
     return out
@@ -441,6 +407,7 @@ if __name__ == "__main__":
     bw = Bandwidth(cache)
     results = bw.dynamic_times(3, 8)
     pp(results)
+
 
 
 
