@@ -158,12 +158,8 @@ def _run_dynamic_ldst(node, tensors, accumulate_output, bw_op, out_level=None, k
             loaded[i] = node.load(tensors[i], allow_lower_level=True)
     
     loaded_out = accumulate_output
-    # If the output is part of the LDST set and the caller supplied an
-    # accumulate buffer, do NOT load it down. Compute into a fresh lower-level
-    # buffer and only perform a single store_to afterward to match timing
-    # semantics (count output words once, not load+store).
     if loaded_out is not None and len(tensors) in bw_op:
-        loaded_out = None
+        loaded_out = node.load(accumulate_output, allow_lower_level=True)
 
     out_low = run_dynamic(
         results,
