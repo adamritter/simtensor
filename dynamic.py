@@ -55,12 +55,13 @@ def run_dynamic_best(node, *tensors, reset_counter=True, accumulate_output=None,
     for d in dims:
         prod *= d
     limit = 1
-    while limit < prod*8:
+    while limit <= prod:
         limit *= 2
 
     # Build the DP table (same convention as in the __main__ demo).
     results = node.dynamic_times(len(ts), limit)
-    print("limit: ", limit)
+    #print("limit: ", limit)
+    #pp(results)
 
     # Helper to reproduce the exact key encoding expected by run_dynamic.
     def _make_key(level: int):
