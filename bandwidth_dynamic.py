@@ -20,8 +20,8 @@ def _dp_split_key(key):
     return pairs[:-1], pairs[-1]
 
 
-def _dp_first_input_output_count(key):
-    """Return first input pair, output pair, and input count.
+def _dp_short_key(key):
+    """Return a shortened key of first input pair, output pair, and count.
 
     ``key`` alternates ``(shape, level)`` pairs for each input matrix
     followed by the output pair. At least two input matrices must be
@@ -76,7 +76,7 @@ def _dp_record_keyinfo(keyinfo, key):
     if keyinfo is None:
         return
     try:
-        short = _dp_first_input_output_count(key)
+        short = _dp_short_key(key)
     except Exception:
         return
     if short not in keyinfo:
