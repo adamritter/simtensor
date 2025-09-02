@@ -727,23 +727,20 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
           whose maximum is smaller. This mirrors utilization being dominated by
           the slowest link.
         """
+        new = [("DBL", tag), new_cpu] + new_bws
+
         if new_key not in mapping:
-            mapping[new_key] = [("DBL", tag), new_cpu] + new_bws
+            mapping[new_key] = new
             return
         cur = mapping[new_key]
-        cur_cpu = cur[1]
-        cur_bws = cur[2:]
+        
+        cur_max = max(cur[1:])
+        new_max = max(new[1:])
 
-        # Allow differing CPU proposals: keep the minimum observed
-        min_cpu = new_cpu if new_cpu < cur_cpu else cur_cpu
-
-        cur_max = max(cur_bws) if cur_bws else 0
-        new_max = max(new_bws) if new_bws else 0
-        best_bws = cur_bws if cur_max <= new_max else new_bws
 
         # Update if either CPU lowered or bandwidth improved
-        if min_cpu != cur_cpu or best_bws is not cur_bws:
-            mapping[new_key] = [("DBL", tag), min_cpu] + best_bws
+        if new_max < cur_max or (new_max == cur_max and sum(new[1:]) < sum(cur[1:])):
+            mapping[new_key] = new
 
     def _dp_expand_key(self, key, times, mapping, level_here, max_cpu_time):
         """Attempt DBL expansion for one key.
