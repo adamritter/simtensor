@@ -24,5 +24,5 @@ Homepage = "https://github.com/adamritter/simtensor"
 Repository = "https://github.com/adamritter/simtensor"
 
 [tool.setuptools]
-py-modules = ["simulator", "simulate", "simtensor"]
+py-modules = ["bandwidth", "simulator", "simulate", "simtensor"]
 

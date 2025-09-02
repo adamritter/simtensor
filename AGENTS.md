@@ -1,7 +1,8 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `simulator.py`: Core engine (`Tensor`, `BinOpx`, `Cache`, `Bandwidth`).
+- `simulator.py`: Core engine (`Tensor`, `BinOpx`, `Cache`).
+- `bandwidth.py`: Bandwidth link between caches with input/output counters and transfer time.
 - `simulate.py`: Example kernels and small driver; run to see behavior.
 - `simtensor.py`: Lightweight module stub reserved for future API surfacing.
 - `tests/`: Unit tests (`unittest`) such as `tests/test_simulator.py`.
