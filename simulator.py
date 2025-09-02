@@ -706,7 +706,7 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
                 words += self._shape_elems(shp)
         return words * self.input_clocks_per_word
 
-    def _dp_update_mapping(self, mapping, new_key, new_cpu, new_bws, tag):
+    def _dp_update_mapping(self, mapping, new_key, new_cpu, new_bws, tag, heap=None):
         """Insert or improve a DP entry with computed times and a tag.
 
         Supports multiple bandwidth times (for multi-link hierarchies). The
@@ -731,6 +731,9 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
 
         if new_key not in mapping:
             mapping[new_key] = new
+            # Requeue brand-new entries for further expansion if a heap is provided
+            if heap is not None:
+                heapq.heappush(heap, (new_cpu, new_key))
             return
         cur = mapping[new_key]
         
@@ -741,8 +744,11 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
         # Update if either CPU lowered or bandwidth improved
         if new_max < cur_max or (new_max == cur_max and sum(new[1:]) < sum(cur[1:])):
             mapping[new_key] = new
+            # Requeue improved entries so they can be expanded further
+            if heap is not None:
+                heapq.heappush(heap, (new_cpu, new_key))
 
-    def _dp_expand_key(self, key, times, mapping, level_here, max_cpu_time):
+    def _dp_expand_key(self, key, times, mapping, level_here, max_cpu_time, heap=None):
         """Attempt DBL expansion for one key.
 
         For each legal position j in the chain where adjacent operands are at
@@ -815,16 +821,36 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
                 for level in range(olvl):
                     if level <= level_here:
                         new_bws[level] += self._shape_elems(odims)
-            self._dp_update_mapping(mapping, new_key, new_cpu, new_bws, j)
+            self._dp_update_mapping(mapping, new_key, new_cpu, new_bws, j, heap)
 
     def _dp_expand(self, mapping, level_here, max_cpu_time):
         """Run the bandwidth-level DP expansion over all current entries.
 
-        Iterates over a snapshot of the mapping and calls _dp_expand_key for
-        each entry, mutating and returning the mapping with any improvements.
+        Uses a min-heap (priority queue) ordered by CPU time. While the smallest
+        CPU-time entry is within half the allowed budget (so that doubling stays
+        within `max_cpu_time`), attempt DBL expansions. New or improved entries
+        are pushed back to the heap via `_dp_update_mapping`.
         """
-        for key, times in list(mapping.items()):
-            self._dp_expand_key(key, times, mapping, level_here, max_cpu_time)
+        heap = []
+        for key, times in mapping.items():
+            try:
+                cpu = times[1]
+            except Exception:
+                continue
+            heapq.heappush(heap, (cpu, key))
+
+        # Process entries in ascending CPU order; stop when doubling would exceed budget
+        while heap:
+            cpu, key = heapq.heappop(heap)
+            # Always consult the latest mapping value
+            times = mapping.get(key)
+            if not times:
+                continue
+            cur_cpu = times[1]
+            # If the smallest CPU exceeds half the budget, doubling would overflow
+            if cur_cpu > max_cpu_time / 2:
+                break
+            self._dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap)
         return mapping
     
     def root_node(self):

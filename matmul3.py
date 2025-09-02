@@ -1,5 +1,6 @@
 import simulator
 import simulate
+import dynamic
 
 def matmul3_two(cache2, a, b, c, out):
     """Compute (a @ b) @ c using two matmul calls with an explicit temporary."""
@@ -82,6 +83,38 @@ def _new_cache(L1_size=100000, L0_size=256):
     return L1
 
 
+def dynamic_best_stats(n, m, p, r):
+    """Run dynamic_best for shapes (n x m) * (m x p) * (p x r).
+
+    Prints the dynamic_best bandwidth/utilization stats and returns the
+    total bandwidth (input + output) used by the dynamic_best run.
+    """
+    cache_dyn = _new_cache()
+    A = cache_dyn.calloc(n, m)
+    B = cache_dyn.calloc(m, p)
+    C = cache_dyn.calloc(p, r)
+    OUT = cache_dyn.calloc(n, r)
+
+    dynamic.run_dynamic_best(cache_dyn, A, B, C, accumulate_output=OUT)
+
+    bw_dyn = cache_dyn.parent
+    op_dyn = bw_dyn.cache.parent
+    util_dyn = simulator.utilization(cache_dyn)
+
+    bw_dyn_total = bw_dyn.input + bw_dyn.output
+    print(
+        "dynamic_best: input={inp} output={out} total={tot} cpu={cpu} util={util:.3f}".format(
+            inp=bw_dyn.input,
+            out=bw_dyn.output,
+            tot=bw_dyn_total,
+            cpu=op_dyn.time,
+            util=util_dyn,
+        )
+    )
+
+    return bw_dyn_total
+
+
 def _run_example(n, m, p, r, title):
     print(f"\n=== {title}: {n}x{m} * {m}x{p} * {p}x{r} ===")
     # Two matmuls: (n x m) @ (m x p) costs n*m*p, then (n x p) @ (p x r) costs n*p*r
@@ -127,11 +160,14 @@ def _run_example(n, m, p, r, title):
             util=util_pre,
         )
     )
+    # Dynamic best implementation
+    bw_dyn_total = dynamic_best_stats(n, m, p, r)
 
     # Simple bandwidth comparison among the two
     totals = [
         ("two-matmul", bw_two.input + bw_two.output),
-        ("fused", bw_pre.input + bw_pre.output),
+        ("fused",      bw_pre.input + bw_pre.output),
+        ("dynamic_best", bw_dyn_total),
     ]
     best = min(totals, key=lambda x: x[1])
     print(f"-> lowest bandwidth: {best[0]}")
