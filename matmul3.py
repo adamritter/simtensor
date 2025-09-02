@@ -27,7 +27,7 @@ def matmul_right_sweep_cached_left(cache2, left_L0, right_L1, out_rows_view, til
         cache2.store_to(out_tile, out_tile_view)
         k0 += tile
 
-def matmul3_fused(cache2, a, b, c, out, tile=4):
+def matmul3_fused(cache2, a, b, c, out, tile=1):
     """Fused triple product with reduced store traffic by precomputing A@B cols.
 
     Strategy:
@@ -138,8 +138,8 @@ def _run_example(n, m, p, r, title):
 
 
 if __name__ == "__main__":
-    # Given example: 100x1 * 1x100 * 100x1 (avoids 100x100 temporary)
-    _run_example(100, 1, 100, 1, "Skinny * Wide * Skinny")
+    # Given example: 128x1 * 1x128 * 128x1 (avoids 128x128 temporary)
+    _run_example(64, 1, 64, 1, "Skinny * Wide * Skinny")
 
     # Another example where benefit is smaller (square-ish)
-    _run_example(64, 32, 32, 64, "Square-ish triple")
+    _run_example(32, 16, 16, 32, "Square-ish triple")
