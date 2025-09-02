@@ -70,7 +70,21 @@ def _dp_bw_time_for_level(bw, key, level_here):
     return words * bw.input_clocks_per_word
 
 
-def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, heap=None):
+def _dp_record_keyinfo(keyinfo, key):
+    """Add ``key`` to the shortened-key index mapping."""
+
+    if keyinfo is None:
+        return
+    try:
+        short = _dp_first_input_output_count(key)
+    except Exception:
+        return
+    if short not in keyinfo:
+        keyinfo[short] = set()
+    keyinfo[short].add(key)
+
+
+def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo=None, heap=None):
     """Insert or improve a DP entry with computed times and a tag.
 
     Values have the form ``[("DBL", tag), cpu, bw0, bw1, ...]`` to support
@@ -82,6 +96,7 @@ def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, heap=None):
 
     if new_key not in mapping:
         mapping[new_key] = new
+        _dp_record_keyinfo(keyinfo, new_key)
         if heap is not None:
             heapq.heappush(heap, (new_cpu, new_key))
         return
@@ -96,7 +111,7 @@ def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, heap=None):
             heapq.heappush(heap, (new_cpu, new_key))
 
 
-def _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap=None):
+def _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap=None, keyinfo=None):
     """Attempt DBL expansion for one key.
 
     For each legal position ``j`` where adjacent operands are at
@@ -156,10 +171,10 @@ def _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap=None):
             for level in range(olvl):
                 if level <= level_here:
                     new_bws[level] += _shape_elems(odims)
-        _dp_update_mapping(mapping, new_key, new_cpu, new_bws, j, heap)
+        _dp_update_mapping(mapping, new_key, new_cpu, new_bws, j, keyinfo, heap)
 
 
-def _dp_expand(mapping, level_here, max_cpu_time):
+def _dp_expand(mapping, level_here, max_cpu_time, keyinfo=None):
     """Run the bandwidth-level DP expansion over all current entries.
 
     Uses a min-heap ordered by CPU time. While the smallest entry can be
@@ -183,7 +198,7 @@ def _dp_expand(mapping, level_here, max_cpu_time):
         cur_cpu = times[1]
         if cur_cpu > max_cpu_time / 2:
             break
-        _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap)
+        _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap, keyinfo)
     return mapping
 
 
@@ -202,9 +217,11 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
     base = bw.cache.dynamic_times(nmatmuls, max_cpu)
     prev_level = bw.cache.level
     out = {}
+    keyinfo = {}
     for key, v in base.items():
         base_key = tuple(key)
         out[base_key] = v
+        _dp_record_keyinfo(keyinfo, base_key)
         candidate_idxs = []
         for i in range(0, len(key), 2):
             lvl = key[i + 1]
@@ -221,7 +238,10 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
                     pair_idxs.append(i // 2)
                 bw_time = bw_words * bw.input_clocks_per_word
                 last_op = ("LDST",) + tuple(pair_idxs)
-                out[tuple(kl)] = [last_op] + v[1:] + [bw_time]
-    out = _dp_expand(out, prev_level + 1, max_cpu)
+                new_key = tuple(kl)
+                out[new_key] = [last_op] + v[1:] + [bw_time]
+                _dp_record_keyinfo(keyinfo, new_key)
+    _dp_expand(out, prev_level + 1, max_cpu, keyinfo)
+    out["_key_index"] = keyinfo
     return out
 
