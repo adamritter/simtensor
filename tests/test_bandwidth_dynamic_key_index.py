@@ -10,7 +10,7 @@ from collections import defaultdict
 
 from simulator import Cache, Bandwidth
 from simulate import muladd
-from bandwidth_dynamic import _dp_first_input_output_count
+from bandwidth_dynamic import _dp_short_key
 
 
 class TestBandwidthDynamicKeyIndex(unittest.TestCase):
@@ -24,17 +24,17 @@ class TestBandwidthDynamicKeyIndex(unittest.TestCase):
         for k in res:
             if k == "_key_index":
                 continue
-            short = _dp_first_input_output_count(k)
+            short = _dp_short_key(k)
             self.assertIn(k, idx.get(short, set()))
         # Two variants share the same shortened key
         ab_L1 = ((2, 2), 1, (2, 1), 0, (2, 1), 0)
         ab_bc_L1 = ((2, 2), 1, (2, 1), 1, (2, 1), 0)
-        short = _dp_first_input_output_count(ab_L1)
+        short = _dp_short_key(ab_L1)
         self.assertIn(ab_L1, idx[short])
         self.assertIn(ab_bc_L1, idx[short])
         # Expanded key from DBL should also be indexed
         expanded = ((2, 4), 1, (4, 1), 1, (2, 1), 0)
-        short_exp = _dp_first_input_output_count(expanded)
+        short_exp = _dp_short_key(expanded)
         self.assertIn(expanded, idx[short_exp])
 
 
