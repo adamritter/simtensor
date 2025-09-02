@@ -2,7 +2,7 @@
 
 import heapq
 from collections import defaultdict
-from itertools import combinations
+from itertools import combinations, zip_longest
 
 
 def _shape_elems(shape):
@@ -244,4 +244,27 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
     _dp_expand(out, prev_level + 1, max_cpu, keyinfo)
     out["_key_index"] = keyinfo
     return out
+
+
+def join_matmuls(key1, value1, key2, value2):
+    """Join two matmul entries and sum their counters.
+
+    ``key1`` and ``key2`` are tuples alternating ``(shape, level)`` pairs with
+    the last pair representing the output. ``value1`` and ``value2`` begin with a
+    tag followed by CPU and bandwidth counters. The output of ``key1`` must match
+    the first input of ``key2``.
+    """
+
+    if key1[-2:] != key2[:2]:
+        raise AssertionError("mismatched intermediate output/input")
+
+    joined_key = key1[:-2] + key2[2:]
+    n_inputs = len(key1) // 2 - 1
+
+    counters = []
+    for a, b in zip_longest(value1[1:], value2[1:], fillvalue=0):
+        counters.append(a + b)
+
+    joined_value = [("JOIN", n_inputs)] + counters
+    return joined_key, joined_value
 
