@@ -20,6 +20,23 @@ def _dp_split_key(key):
     return pairs[:-1], pairs[-1]
 
 
+def _dp_first_input_output_count(key):
+    """Return first input pair, output pair, and input count.
+
+    ``key`` alternates ``(shape, level)`` pairs for each input matrix
+    followed by the output pair. At least two input matrices must be
+    present.
+
+    Returns ``(first_input, output, n_inputs)`` where each element is a
+    ``(shape, level)`` pair.
+    """
+
+    ops, outp = _dp_split_key(key)
+    if len(ops) < 2:
+        raise ValueError("need at least two input matrices")
+    return ops[0], outp, len(ops)
+
+
 def _dp_join_key(ops, outp):
     """Assemble a DP key from operand and output pairs."""
 
