@@ -6,6 +6,8 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from collections import defaultdict
+
 from simulator import Cache, Bandwidth
 from simulate import muladd
 from bandwidth_dynamic import _dp_first_input_output_count
@@ -17,6 +19,7 @@ class TestBandwidthDynamicKeyIndex(unittest.TestCase):
         res = bw.dynamic_times(2, 1000)
         idx = res.get("_key_index")
         self.assertIsNotNone(idx)
+        self.assertIsInstance(idx, defaultdict)
         # Each key should appear in the index under its shortened form
         for k in res:
             if k == "_key_index":

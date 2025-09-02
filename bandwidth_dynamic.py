@@ -1,6 +1,7 @@
 """Helper routines for Bandwidth.dynamic_times."""
 
 import heapq
+from collections import defaultdict
 from itertools import combinations
 
 
@@ -79,8 +80,6 @@ def _dp_record_keyinfo(keyinfo, key):
         short = _dp_first_input_output_count(key)
     except Exception:
         return
-    if short not in keyinfo:
-        keyinfo[short] = set()
     keyinfo[short].add(key)
 
 
@@ -217,7 +216,7 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
     base = bw.cache.dynamic_times(nmatmuls, max_cpu)
     prev_level = bw.cache.level
     out = {}
-    keyinfo = {}
+    keyinfo = defaultdict(set)
     for key, v in base.items():
         base_key = tuple(key)
         out[base_key] = v
