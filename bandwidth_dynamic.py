@@ -22,20 +22,21 @@ def _dp_split_key(key):
 
 
 def _dp_short_key(key):
-    """Return a shortened key of first input pair, output pair, and count.
+    """Return a shortened key of input dimensions and level.
 
     ``key`` alternates ``(shape, level)`` pairs for each input matrix
     followed by the output pair. At least two input matrices must be
     present.
 
-    Returns ``(first_input, output, n_inputs)`` where each element is a
-    ``(shape, level)`` pair.
+    Returns the first input's dimensions followed by its cache level,
+    e.g. ``(m, k, level)``.
     """
 
-    ops, outp = _dp_split_key(key)
+    ops, _ = _dp_split_key(key)
     if len(ops) < 2:
         raise ValueError("need at least two input matrices")
-    return ops[0], outp, len(ops)
+    shp, lvl = ops[0]
+    return (*shp, lvl)
 
 
 def _dp_join_key(ops, outp):
