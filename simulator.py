@@ -812,8 +812,9 @@ by this link's input_clocks_per_word to obtain a time in 'clocks'."""
 
             if 0 < j < n:
                 (odims, olvl) = new_outp
-                if olvl == level_here:
-                    new_bws[-1] += self._shape_elems(odims)
+                for level in range(olvl):
+                    if level <= level_here:
+                        new_bws[level] += self._shape_elems(odims)
             self._dp_update_mapping(mapping, new_key, new_cpu, new_bws, j)
 
     def _dp_expand(self, mapping, level_here, max_cpu_time):
