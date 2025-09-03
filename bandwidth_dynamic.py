@@ -7,7 +7,7 @@ from itertools import combinations, zip_longest
 
 # Toggle DP join of matmul chains. Disabled by default until upstream code
 # is ready to handle "JOIN" entries.
-ENABLE_DP_JOIN_SHORT_KEYS = False
+ENABLE_DP_JOIN_MATMULS = False
 
 
 def _shape_elems(shape):
@@ -193,8 +193,8 @@ def _dp_expand(mapping, level_here, max_cpu_time, keyinfo=None):
     return mapping
 
 
-def _dp_join_short_keys(key, keyinfo, mapping, heap, maxn, max_cpu_time):
-    """Join ``key`` with other keys sharing its output short key.
+def _dp_join_matmuls(key, keyinfo, mapping, heap, maxn, max_cpu_time):
+    """Join ``key`` with other matmul chains sharing its output short key.
 
     ``keyinfo`` maps short keys to full keys. Using the output dimensions and
     level of ``key`` we look up candidate keys whose first operand matches.
@@ -270,7 +270,7 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
                 keyinfo[_dp_short_key(new_key)].add(new_key)
     _dp_expand(out, prev_level + 1, max_cpu, keyinfo)
 
-    if ENABLE_DP_JOIN_SHORT_KEYS:
+    if ENABLE_DP_JOIN_MATMULS:
         heap = []
         for key, times in out.items():
             cpu = times[1]
@@ -280,7 +280,7 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
             times = out.get(key)
             if times is None:
                 continue
-            _dp_join_short_keys(key, keyinfo, out, heap, nmatmuls, max_cpu)
+            _dp_join_matmuls(key, keyinfo, out, heap, nmatmuls, max_cpu)
 
     out["_key_index"] = keyinfo
     return out
