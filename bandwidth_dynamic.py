@@ -87,12 +87,13 @@ def _dp_record_keyinfo(keyinfo, key):
 def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo=None, heap=None):
     """Insert or improve a DP entry with computed times and a tag.
 
-    Values have the form ``[("DBL", tag), cpu, bw0, bw1, ...]`` to support
-    multiple bandwidth links. Entries are compared by the maximum bandwidth
-    time; ties fall back to the summed bandwidth times.
+    ``tag`` is stored verbatim as the first element in the mapping entry.
+    The remaining elements are the CPU time followed by any bandwidth times.
+    Entries are compared by the maximum bandwidth time; ties fall back to the
+    summed bandwidth times.
     """
 
-    new = [("DBL", tag), new_cpu] + new_bws
+    new = [tag, new_cpu] + new_bws
 
     if new_key not in mapping:
         mapping[new_key] = new
@@ -171,7 +172,7 @@ def _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap=None, key
             for level in range(olvl):
                 if level <= level_here:
                     new_bws[level] += _shape_elems(odims)
-        _dp_update_mapping(mapping, new_key, new_cpu, new_bws, j, keyinfo, heap)
+        _dp_update_mapping(mapping, new_key, new_cpu, new_bws, ("DBL", j), keyinfo, heap)
 
 
 def _dp_expand(mapping, level_here, max_cpu_time, keyinfo=None):
@@ -200,6 +201,45 @@ def _dp_expand(mapping, level_here, max_cpu_time, keyinfo=None):
             break
         _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap, keyinfo)
     return mapping
+
+
+def _dp_join_short_keys(key, keyinfo, mapping, heap, maxn, max_cpu_time):
+    """Join ``key`` with other keys sharing its output short key.
+
+    ``keyinfo`` maps short keys to full keys. Using the output dimensions and
+    level of ``key`` we look up candidate keys whose first operand matches.
+    If the joined chain does not exceed ``maxn`` inputs and the resulting CPU
+    time stays within ``max_cpu_time``, the combined entry is inserted into the
+    result mapping via :func:`_dp_update_mapping`.
+    """
+
+    if keyinfo is None:
+        return
+    value1 = mapping.get(key)
+    if value1 is None:
+        return
+    try:
+        _, outp = _dp_split_key(key)
+    except Exception:
+        return
+    short = (*outp[0], outp[1])
+    candidates = keyinfo.get(short, set())
+    for other in list(candidates):
+        if other == key:
+            continue
+        value2 = mapping.get(other)
+        if value2 is None:
+            continue
+        joined_key, joined_value = join_matmuls(key, value1, other, value2)
+        n_inputs = len(joined_key) // 2 - 1
+        if n_inputs > maxn:
+            continue
+        new_cpu = joined_value[1]
+        if new_cpu > max_cpu_time:
+            continue
+        tag = joined_value[0]
+        new_bws = joined_value[2:]
+        _dp_update_mapping(mapping, joined_key, new_cpu, new_bws, tag, keyinfo, heap)
 
 
 def dynamic_times_impl(bw, nmatmuls, max_cpu):
