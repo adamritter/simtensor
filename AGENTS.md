@@ -11,7 +11,6 @@
 ## Build, Test, and Development Commands
 - Install (editable): `python -m pip install -e .`
 - Build sdist/wheel: `python -m pip install build && python -m build`
-- Run tests (verbose): `python -m unittest discover -v`
 - Run tests (pytest): `pytest`
 - Run examples locally: `python simulate.py`
 
