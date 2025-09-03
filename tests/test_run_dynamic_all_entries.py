@@ -8,7 +8,7 @@ if ROOT not in sys.path:
 
 import simulate
 from simulator import Tensor, Cache, Bandwidth
-from dynamic import run_dynamic, pp, previous_key, extras
+from dynamic import run_dynamic, pp, previous_key, previous_key2, extras
 
 
 def verify_result(key, results, node):
@@ -22,8 +22,13 @@ def verify_result(key, results, node):
     if isinstance(node, Cache) or isinstance(node, Bandwidth):
         tensors = [node.alloc(t, allow_lower_level=True) for t in tensors]
 
-    print(f"Running dynamic for {key}, value {results.get(key)}, extras {extras(key, results)}")
-    print(f"    previous_key: {previous_key(key, results.get(key)[0])} = {results.get(previous_key(key, results.get(key)[0]))}")
+    v = results.get(key)
+    print(f"Running dynamic for {key}, value {v}, extras {extras(key, results)}")
+    pk = previous_key(key, v[0])
+    print(f"    previous_key: {pk} = {results.get(pk)}")
+    if isinstance(v[0], tuple) and v[0] and v[0][0] == "JOIN":
+        pk2 = previous_key2(key, v[0])
+        print(f"    previous_key2: {pk2} = {results.get(pk2)}")
     out = run_dynamic(results, node, *tensors, out_level=out_level, reset_counter=True)
     # Output shape should match trailing dims in the key
     assert out.sz == [out_dims[0], out_dims[1]]
@@ -34,14 +39,15 @@ def verify_result(key, results, node):
             node.free(t, allow_lower_level=True)
 
     # Additionally verify that for all non-BinOpx rows, the previous_key exists.
-    v = results.get(key)
     if isinstance(v, list) and v:
         head = v[0]
-        # Skip pure compute rows
         if not (isinstance(head, str) and head == 'BinOpx'):
             op = head if isinstance(head, tuple) else None
             pk = previous_key(key, op)
             assert pk in results, f"previous_key missing for {key} with op {head} -> {pk}"
+            if isinstance(op, tuple) and op and op[0] == 'JOIN':
+                pk2 = previous_key2(key, op)
+                assert pk2 in results, f"previous_key2 missing for {key} with op {head} -> {pk2}"
 
 
 def verify_results(results, node):

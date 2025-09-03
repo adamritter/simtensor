@@ -530,6 +530,41 @@ def previous_key(key, op=None):
     return None
 
 
+def previous_key2(key, op=None):
+    """Variant of :func:`previous_key` for JOIN entries.
+
+    For JOIN rows this returns the key of the *second* subproblem, i.e. the
+    right-hand matrix chain. For all other operations it delegates to
+    :func:`previous_key`.
+    """
+
+    pairs = [(key[i], key[i + 1]) for i in range(0, len(key), 2)]
+    ops = pairs[:-1]
+    outp = pairs[-1]
+
+    if isinstance(op, tuple) and op and op[0] == "JOIN":
+        try:
+            n_inputs = op[1]
+        except Exception:
+            n_inputs = None
+        if isinstance(n_inputs, int) and 0 < n_inputs < len(ops):
+            left_ops = ops[:n_inputs]
+            right_ops = ops[n_inputs:]
+            # Build intermediate result from the left subchain
+            interm_rows = left_ops[0][0][0]
+            interm_cols = left_ops[-1][0][1]
+            interm_lvl = left_ops[-1][1]
+            chain = [((interm_rows, interm_cols), interm_lvl)] + list(right_ops)
+            flat = []
+            for shp, lvl in chain:
+                flat.extend([shp, lvl])
+            flat.extend([outp[0], outp[1]])
+            return tuple(flat)
+        return None
+
+    return previous_key(key, op)
+
+
 def extras(key, results):
     """Compute extra cpu/bandwidth for a row.
 
@@ -584,8 +619,12 @@ def pp(results):
         if extra is None:
             print(f"{k}: {v} | util={util:.3f}")
         else:
-            print(f"{k}: {v} | util={util:.3f} | extras={extra}")                   
-        print(f"    previous_key: {previous_key(k, v[0])} = {results.get(previous_key(k, v[0]))}")
+            print(f"{k}: {v} | util={util:.3f} | extras={extra}")
+        pk = previous_key(k, v[0])
+        print(f"    previous_key: {pk} = {results.get(pk)}")
+        if isinstance(v[0], tuple) and v[0] and v[0][0] == "JOIN":
+            pk2 = previous_key2(k, v[0])
+            print(f"    previous_key2: {pk2} = {results.get(pk2)}")
 
 
 if __name__ == "__main__":
