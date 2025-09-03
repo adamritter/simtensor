@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Simulator for optimal kernels with cache and bandwidth constraints."
 readme = "README.md"
 requires-python = ">=3.9"
+dependencies = ["pytest"]
 license = { file = "LICENSE" }
 keywords = ["simulation", "tensor", "matrix", "performance", "kernels"]
 classifiers = [
