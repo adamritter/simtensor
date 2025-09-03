@@ -22,6 +22,7 @@ Each command runs from the repository root. CI runs the same build and test step
 - Structure: keep functions small and focused; prefer explicit data flow over hidden mutation.
 - Formatting: no enforced tool yet; if used locally, format with `black` (88 cols) and lint with `ruff` before submitting.
 - Types: do not use type annotations or the `typing` module; prefer clear names and brief docstrings/comments.
+- Error handling: avoid silent fallbacks or swallowing exceptions; let unexpected states crash loudly to expose bugs.
 
 ## Testing Guidelines
 - Framework: `unittest` (`unittest.TestCase`).
