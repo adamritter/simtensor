@@ -101,11 +101,12 @@ def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo, heap=No
 
     if new_max < cur_max or (new_max == cur_max and sum(new[1:]) < sum(cur[1:])):
         mapping[new_key] = new
+        keyinfo[_dp_short_key(new_key)].add(new_key)
         if heap is not None:
             heapq.heappush(heap, (new_cpu, new_key))
 
 
-def _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap=None, keyinfo=None):
+def _dp_expand_key(key, times, mapping, level_here, max_cpu_time, keyinfo, heap=None):
     """Attempt DBL expansion for one key.
 
     For each legal position ``j`` where adjacent operands are at
@@ -168,7 +169,7 @@ def _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap=None, key
         _dp_update_mapping(mapping, new_key, new_cpu, new_bws, ("DBL", j), keyinfo, heap)
 
 
-def _dp_expand(mapping, level_here, max_cpu_time, keyinfo=None):
+def _dp_expand(mapping, level_here, max_cpu_time, keyinfo):
     """Run the bandwidth-level DP expansion over all current entries.
 
     Uses a min-heap ordered by CPU time. While the smallest entry can be
@@ -189,7 +190,7 @@ def _dp_expand(mapping, level_here, max_cpu_time, keyinfo=None):
         cur_cpu = times[1]
         if cur_cpu > max_cpu_time / 2:
             break
-        _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap, keyinfo)
+        _dp_expand_key(key, times, mapping, level_here, max_cpu_time, keyinfo, heap)
     return mapping
 
 
