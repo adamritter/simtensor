@@ -77,10 +77,7 @@ def _dp_record_keyinfo(keyinfo, key):
 
     if keyinfo is None:
         return
-    try:
-        short = _dp_short_key(key)
-    except Exception:
-        return
+    short = _dp_short_key(key)
     keyinfo[short].add(key)
 
 
@@ -185,10 +182,7 @@ def _dp_expand(mapping, level_here, max_cpu_time, keyinfo=None):
 
     heap = []
     for key, times in mapping.items():
-        try:
-            cpu = times[1]
-        except Exception:
-            continue
+        cpu = times[1]
         heapq.heappush(heap, (cpu, key))
 
     while heap:
@@ -218,10 +212,7 @@ def _dp_join_short_keys(key, keyinfo, mapping, heap, maxn, max_cpu_time):
     value1 = mapping.get(key)
     if value1 is None:
         return
-    try:
-        _, outp = _dp_split_key(key)
-    except Exception:
-        return
+    _, outp = _dp_split_key(key)
     short = (*outp[0], outp[1])
     candidates = keyinfo.get(short, set())
     for other in list(candidates):
