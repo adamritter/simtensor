@@ -12,6 +12,7 @@ Top-level helpers:
 """
 
 from bandwidth import Bandwidth
+from itertools import zip_longest
 
 # Simulates the time to run the operations:
 # - Loading / saving / discarding data in caches are explicit in the simulation
@@ -503,10 +504,7 @@ class Cache:
         out = {}
         for key, v in base.items():
             total = 0
-            # Iterate pairs (shape, level)
-            for i in range(0, len(key), 2):
-                shp = key[i]
-                lvl = key[i + 1] if i + 1 < len(key) else None
+            for shp, lvl in zip_longest(key[0::2], key[1::2]):
                 if isinstance(lvl, int) and lvl == self.level:
                     total += shape_elems(shp)
             if total <= self.size:
