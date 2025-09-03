@@ -1,8 +1,9 @@
 import pytest
 
-from simulator import BinOpx, Tensor
-from simulate import muladdsimple
+from simulator import BinOpx, Tensor, Cache, Bandwidth
+from simulate import muladdsimple, muladd
 from dynamic import run_dynamic
+import bandwidth_dynamic
 
 
 def _new_node():
@@ -49,7 +50,6 @@ def test_run_dynamic_ldst_two_and_counters():
     # Build a two-level hierarchy: L1 --bw--> L0 --op
     node = BinOpx([], 0, [], 0, [], 0, muladdsimple, 1)
     # Small L0 so only small shapes pass capacity filter
-    from simulator import Cache, Bandwidth
     L0 = Cache(24, node)
     bw = Bandwidth(L0)
     L1 = Cache(1000, bw)
@@ -73,6 +73,36 @@ def test_run_dynamic_ldst_two_and_counters():
     # Verify bw.time matches dynamic result's bw_time for the selected key variant
     key = ((2, 2), 1, (2, 2), 1, (2, 2), 1)
     assert results[key][2] == bw.time
+
+
+def test_run_dynamic_handles_join_entries():
+    flag = bandwidth_dynamic.ENABLE_DP_JOIN_MATMULS
+    bandwidth_dynamic.ENABLE_DP_JOIN_MATMULS = True
+    try:
+        bw = Bandwidth(Cache(12, muladd))
+        results = bw.dynamic_times(3, 20)
+        join_key = None
+        for k, v in results.items():
+            if isinstance(v, list) and v and isinstance(v[0], tuple) and v[0][0] == "JOIN":
+                join_key = k
+                break
+        assert join_key is not None
+
+        pairs = [(join_key[i], join_key[i + 1]) for i in range(0, len(join_key), 2)]
+        ops = pairs[:-1]
+        out_dims, out_level = pairs[-1]
+
+        tensors = [Tensor.zeros(shp[0], shp[1], level=lvl) for shp, lvl in ops]
+        tensors = [bw.alloc(t, allow_lower_level=True) for t in tensors]
+
+        out = run_dynamic(results, bw, *tensors, out_level=out_level, reset_counter=True)
+        assert out.sz == [out_dims[0], out_dims[1]]
+
+        bw.free(out, allow_lower_level=True)
+        for t in tensors:
+            bw.free(t, allow_lower_level=True)
+    finally:
+        bandwidth_dynamic.ENABLE_DP_JOIN_MATMULS = flag
 
 
 # def test_run_dynamic_ldst_accumulate_output():
