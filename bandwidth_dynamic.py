@@ -72,16 +72,7 @@ def _dp_bw_time_for_level(bw, key, level_here):
     return words * bw.input_clocks_per_word
 
 
-def _dp_record_keyinfo(keyinfo, key):
-    """Add ``key`` to the shortened-key index mapping."""
-
-    if keyinfo is None:
-        return
-    short = _dp_short_key(key)
-    keyinfo[short].add(key)
-
-
-def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo=None, heap=None):
+def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo, heap=None):
     """Insert or improve a DP entry with computed times and a tag.
 
     ``tag`` is stored verbatim as the first element in the mapping entry.
@@ -94,7 +85,7 @@ def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo=None, he
 
     if new_key not in mapping:
         mapping[new_key] = new
-        _dp_record_keyinfo(keyinfo, new_key)
+        keyinfo[_dp_short_key(new_key)].add(new_key)
         if heap is not None:
             heapq.heappush(heap, (new_cpu, new_key))
         return
@@ -252,7 +243,7 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
     for key, v in base.items():
         base_key = tuple(key)
         out[base_key] = v
-        _dp_record_keyinfo(keyinfo, base_key)
+        keyinfo[_dp_short_key(base_key)].add(base_key)
         candidate_idxs = []
         for i in range(0, len(key), 2):
             lvl = key[i + 1]
@@ -271,7 +262,7 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
                 last_op = ("LDST",) + tuple(pair_idxs)
                 new_key = tuple(kl)
                 out[new_key] = [last_op] + v[1:] + [bw_time]
-                _dp_record_keyinfo(keyinfo, new_key)
+                keyinfo[_dp_short_key(new_key)].add(new_key)
     _dp_expand(out, prev_level + 1, max_cpu, keyinfo)
     out["_key_index"] = keyinfo
     return out
