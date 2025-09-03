@@ -5,9 +5,8 @@ from collections import defaultdict
 from itertools import combinations, zip_longest
 
 
-# Toggle DP join of matmul chains. Disabled by default until upstream code
-# is ready to handle "JOIN" entries.
-ENABLE_DP_JOIN_MATMULS = False
+# Toggle DP join of matmul chains. Enabled by default to allow "JOIN" entries.
+ENABLE_DP_JOIN_MATMULS = True
 
 
 def _shape_elems(shape):
