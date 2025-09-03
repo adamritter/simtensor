@@ -12,6 +12,7 @@ Top-level helpers:
 """
 
 from bandwidth import Bandwidth
+from math import prod
 
 # Simulates the time to run the operations:
 # - Loading / saving / discarding data in caches are explicit in the simulation
@@ -48,24 +49,18 @@ class Tensor:
                 skips.append(m)
                 m*=c
         self.skips = skips
-        if self.sz == []:
+        if not self.sz:
             self.value = self.data[self.offset]
 
     def size(self):
         """Return the total element count of the view."""
-        r = 1
-        for i in self.sz:
-            r*=i
-        return r
+        return prod(self.sz)
 
     def sum(self):
         """Return the sum of elements in the view (recursive)."""
-        if self.sz == []:
+        if not self.sz:
             return self.data[self.offset]
-        r=0
-        for i in range(self.sz[0]):
-            r+=self[i].sum()
-        return r
+        return sum(self[i].sum() for i in range(self.sz[0]))
 
     def __getitem__(self, key):
         """Return a Tensor view using basic int/slice indexing.
@@ -106,7 +101,7 @@ class Tensor:
     def __setitem__(self, key, value):
         """Assign a scalar value via integer indexing into the view."""
         # Scalar assignment: accept any key (e.g., (), 0, slice(None))
-        if self.sz == []:
+        if not self.sz:
             self.value = value
             self.data[self.offset] = value
             return
@@ -131,40 +126,23 @@ class Tensor:
     # No setv anymore; use item assignment
         
     def __repr__(self):
-        if self.sz == []:
+        if not self.sz:
             return str(self.data[self.offset])
-        r=["["]
-        for i in range(self.sz[0]):
-            if  i > 0:
-                r.append(', ')
-            r.append(self[i].__repr__())
-        r.append("]")
-        return "".join(r)
+        inner = ", ".join(repr(self[i]) for i in range(self.sz[0]))
+        return f"[{inner}]"
 
     @classmethod
     def zeros(cls, *shape, level=0):
-        """Create a new zero-initialized Tensor with the given shape.
-
-        Usage:
-        - Tensor.zeros(2, 3) -> 2x3 zeros at level 0
-        - Tensor.zeros([2, 3], level=1) -> 2x3 zeros at level 1
-        - Tensor.zeros() -> scalar zero
-        """
+        """Create a new zero-initialized Tensor with the given shape."""
         if len(shape) == 1 and isinstance(shape[0], (list, tuple)):
             shape = tuple(shape[0])
         sz = list(shape)
-        if len(sz) == 0:
-            data = [0]
-            return cls(data, level, [])
-        count = 1
-        for d in sz:
-            count *= d
-        data = [0] * count
+        data = [0] * prod(sz) if sz else [0]
         return cls(data, level, sz)
 
     def zero_(self):
         """In-place: set all elements in this Tensor view to zero."""
-        if self.sz == []:
+        if not self.sz:
             self.data[self.offset] = 0
             self.value = 0
             return
@@ -465,19 +443,13 @@ class Cache:
         rec(0, src.offset, dst.offset)
 
     def alloc_diag(self, n):
-        data = []
-        for i in range(n):
-            for j in range(n):
-                data.append(i==j)
+        data = [i == j for i in range(n) for j in range(n)]
         return self.alloc(Tensor(data, self.level, [n, n]))
 
     def calloc(self, n, m, level=None):
         if level is not None and level != self.level:
             return self.parent.calloc(n, m, level)
-        data = []
-        for i in range(n):
-            for j in range(m):
-                data.append(0)
+        data = [0] * (n * m)
         return self.alloc(Tensor(data, self.level, [n, m]))
 
     def __repr__(self):
@@ -495,10 +467,7 @@ class Cache:
         base = self.parent.dynamic_times(nmatmuls, max_cpu)
 
         def shape_elems(shape):
-            n = 1
-            for d in shape:
-                n *= d
-            return n
+            return prod(shape)
 
         out = {}
         for key, v in base.items():
