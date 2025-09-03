@@ -7,6 +7,7 @@ from simulator import Cache, Bandwidth, utilization, Tensor, reset_counters, get
 from simulate import muladd, matmulsimple, matmul
 import os
 import math
+from itertools import zip_longest
 DEBUG = int(os.environ.get("DEBUG", 0))
 def run_dynamic_best(node, *tensors, reset_counter=True, accumulate_output=None, only_store=False):
     """
@@ -540,14 +541,8 @@ def extras(key, results):
     # Extras are computed over the numeric tail: bwcpu is just value[1:]
     cur_tail = list(v[1:])
     prev_tail = list(prev[1:])
-    # Pad the shorter list (e.g., previous BinOpx with no bw slots) with zeros
-    n = max(len(cur_tail), len(prev_tail))
-    if len(cur_tail) < n:
-        cur_tail += [0] * (n - len(cur_tail))
-    if len(prev_tail) < n:
-        prev_tail += [0] * (n - len(prev_tail))
     factor = 2 if kind == "DBL" else 1
-    return [cur_tail[i] - factor * prev_tail[i] for i in range(n)]
+    return [c - factor * p for c, p in zip_longest(cur_tail, prev_tail, fillvalue=0)]
 
 
 def pp(results):
