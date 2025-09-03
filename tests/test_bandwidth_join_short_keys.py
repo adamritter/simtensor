@@ -7,7 +7,7 @@ ROOT = os.path.dirname(os.path.dirname(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from bandwidth_dynamic import _dp_join_short_keys, _dp_record_keyinfo
+from bandwidth_dynamic import _dp_join_short_keys, _dp_short_key
 
 
 class TestBandwidthJoinShortKeys(unittest.TestCase):
@@ -31,8 +31,8 @@ class TestBandwidthJoinShortKeys(unittest.TestCase):
     def test_join_short_keys_adds_entry_within_limits(self):
         mapping = {self.key1: self.value1, self.key2: self.value2}
         keyinfo = defaultdict(set)
-        _dp_record_keyinfo(keyinfo, self.key1)
-        _dp_record_keyinfo(keyinfo, self.key2)
+        keyinfo[_dp_short_key(self.key1)].add(self.key1)
+        keyinfo[_dp_short_key(self.key2)].add(self.key2)
         heap = []
 
         _dp_join_short_keys(self.key1, keyinfo, mapping, heap, 4, 20)
@@ -43,8 +43,8 @@ class TestBandwidthJoinShortKeys(unittest.TestCase):
     def test_join_short_keys_respects_cpu_limit(self):
         mapping = {self.key1: self.value1, self.key2: self.value2}
         keyinfo = defaultdict(set)
-        _dp_record_keyinfo(keyinfo, self.key1)
-        _dp_record_keyinfo(keyinfo, self.key2)
+        keyinfo[_dp_short_key(self.key1)].add(self.key1)
+        keyinfo[_dp_short_key(self.key2)].add(self.key2)
         heap = []
 
         _dp_join_short_keys(self.key1, keyinfo, mapping, heap, 4, 16)
