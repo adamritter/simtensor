@@ -33,6 +33,14 @@ class TestTensorBasics(unittest.TestCase):
         self.assertEqual(t[1][0].value, 2)  # (row 1, col 0)
         self.assertEqual(t[1][1].value, 4)  # (row 1, col 1)
 
+    def test_negative_indexing(self):
+        t = simulator.Tensor([1, 2, 3, 4], 0, [2, 2])
+        self.assertEqual(t[-1][-1].value, 4)
+        self.assertEqual(t[-2][0].value, 1)
+        col = t[:, -1:]
+        self.assertEqual(col.size(), 2)
+        self.assertEqual(col[0][0].value, 3)
+
 
 class TestBinOpx(unittest.TestCase):
     def test_muladd_runs_and_accumulates_time(self):
