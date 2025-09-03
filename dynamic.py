@@ -514,14 +514,16 @@ def previous_key(key, op=None):
             # Reconstruct the first subproblem that produced this JOIN entry.
             try:
                 n_inputs = op[1]
+                interm_lvl = op[2]
             except Exception:
                 n_inputs = None
+                interm_lvl = None
             if isinstance(n_inputs, int) and 0 < n_inputs <= len(ops):
                 first_ops = ops[:n_inputs]
                 # Output dims: rows from first operand, cols from last operand
                 out_rows = first_ops[0][0][0]
                 out_cols = first_ops[-1][0][1]
-                out_lvl = first_ops[-1][1]
+                out_lvl = interm_lvl if isinstance(interm_lvl, int) else first_ops[-1][1]
                 flat = []
                 for shp, lvl in first_ops:
                     flat.extend([shp, lvl])
@@ -545,15 +547,17 @@ def previous_key2(key, op=None):
     if isinstance(op, tuple) and op and op[0] == "JOIN":
         try:
             n_inputs = op[1]
+            interm_lvl = op[2]
         except Exception:
             n_inputs = None
+            interm_lvl = None
         if isinstance(n_inputs, int) and 0 < n_inputs < len(ops):
             left_ops = ops[:n_inputs]
             right_ops = ops[n_inputs:]
             # Build intermediate result from the left subchain
             interm_rows = left_ops[0][0][0]
             interm_cols = left_ops[-1][0][1]
-            interm_lvl = left_ops[-1][1]
+            interm_lvl = interm_lvl if isinstance(interm_lvl, int) else left_ops[-1][1]
             chain = [((interm_rows, interm_cols), interm_lvl)] + list(right_ops)
             flat = []
             for shp, lvl in chain:

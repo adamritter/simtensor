@@ -19,7 +19,7 @@ class TestBandwidthJoinMatmuls(unittest.TestCase):
         joined_key, joined_value = join_matmuls(key1, value1, key2, value2)
 
         expect_key = ((2, 3), 0, (3, 4), 0, (4, 5), 0, (2, 5), 0)
-        expect_value = [("JOIN", 2), 17, 5]
+        expect_value = [("JOIN", 2, 0), 17, 5]
         self.assertEqual(joined_key, expect_key)
         self.assertEqual(joined_value, expect_value)
 
