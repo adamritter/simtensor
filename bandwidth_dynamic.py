@@ -305,11 +305,12 @@ def join_matmuls(key1, value1, key2, value2):
 
     joined_key = key1[:-2] + key2[2:]
     n_inputs = len(key1) // 2 - 1
+    interm_level = key1[-1]
 
     counters = []
     for a, b in zip_longest(value1[1:], value2[1:], fillvalue=0):
         counters.append(a + b)
 
-    joined_value = [("JOIN", n_inputs)] + counters
+    joined_value = [("JOIN", n_inputs, interm_level)] + counters
     return joined_key, joined_value
 

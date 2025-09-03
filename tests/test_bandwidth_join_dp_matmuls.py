@@ -26,7 +26,7 @@ class TestBandwidthJoinMatmuls(unittest.TestCase):
             (2, 5),
             0,
         )
-        self.expect_value = [("JOIN", 2), 17, 5]
+        self.expect_value = [("JOIN", 2, 0), 17, 5]
 
     def test_join_matmuls_adds_entry_within_limits(self):
         mapping = {self.key1: self.value1, self.key2: self.value2}
