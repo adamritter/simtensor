@@ -190,20 +190,7 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
     while len(counters) > len(entry[1:]) and counters[-1] == 0:
         counters.pop()
     if accumulate_output is not None and not only_store:
-        # Go through all levels of the accumulate_output and add the time it takes to load them
-        cur = node
-        while cur is not None:
-            if isinstance(cur, Cache):
-                if cur.level < accumulate_output.level:
-                    idx = cur.level + 1  # counters[0] is CPU; bandwidth links start at 1
-                    while idx >= len(counters):
-                        counters.append(0)
-                    counters[idx] -= accumulate_output.size()
-                cur = cur.parent
-            elif isinstance(cur, Bandwidth):
-                cur = cur.cache
-            else:
-                cur = None
+        _account_accumulate_load(node, counters, accumulate_output)
     if counters != entry[1:]:
             raise AssertionError("Old: Counters mismatch: {} != {}, key: {}, entry: {}".format(counters, entry[1:], key, entry))
                 
@@ -220,6 +207,23 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
     if isinstance(node, Bandwidth) or isinstance(node, Cache):
         assert node.cachecontains(out, allow_lower_level=True), "Output tensor not in cache: " + str(out)  + " for key: " + str(key) + ", value: " + str(entry)+ ", accumulate_output: " + str(accumulate_output)+ ", in " + str(node)
     return out
+
+
+def _account_accumulate_load(node, counters, accumulate_output):
+    """Decrement bandwidth counters for loads of ``accumulate_output``."""
+    cur = node
+    while cur is not None:
+        if isinstance(cur, Cache):
+            if cur.level < accumulate_output.level:
+                idx = cur.level + 1  # counters[0] is CPU; bandwidth links start at 1
+                while idx >= len(counters):
+                    counters.append(0)
+                counters[idx] -= accumulate_output.size()
+            cur = cur.parent
+        elif isinstance(cur, Bandwidth):
+            cur = cur.cache
+        else:
+            cur = None
 
 
 def _run_dynamic_binopx(node, tensors, accumulate_output, only_store=False):
