@@ -5,6 +5,11 @@ from collections import defaultdict
 from itertools import combinations, zip_longest
 
 
+# Toggle DP join of matmul chains. Disabled by default until upstream code
+# is ready to handle "JOIN" entries.
+ENABLE_DP_JOIN_SHORT_KEYS = False
+
+
 def _shape_elems(shape):
     """Return the product of dimensions in ``shape``."""
 
@@ -273,6 +278,19 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
                 out[new_key] = [last_op] + v[1:] + [bw_time]
                 _dp_record_keyinfo(keyinfo, new_key)
     _dp_expand(out, prev_level + 1, max_cpu, keyinfo)
+
+    if ENABLE_DP_JOIN_SHORT_KEYS:
+        heap = []
+        for key, times in out.items():
+            cpu = times[1]
+            heapq.heappush(heap, (cpu, key))
+        while heap:
+            cpu, key = heapq.heappop(heap)
+            times = out.get(key)
+            if times is None:
+                continue
+            _dp_join_short_keys(key, keyinfo, out, heap, nmatmuls, max_cpu)
+
     out["_key_index"] = keyinfo
     return out
 
