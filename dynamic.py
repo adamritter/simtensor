@@ -591,12 +591,17 @@ def extras(key, results):
     if kind == "BinOpx" or kind is None:
         return None
 
-    prev = results.get(previous_key(key, v[0]))
-    if prev is None:
+    prev1 = results.get(previous_key(key, v[0]))
+    if prev1 is None:
         return None
-    # Extras are computed over the numeric tail: bwcpu is just value[1:]
     cur_tail = list(v[1:])
-    prev_tail = list(prev[1:])
+    prev1_tail = list(prev1[1:])
+    if kind == "JOIN":
+        prev2 = results.get(previous_key2(key, v[0]))
+        prev2_tail = list(prev2[1:]) if prev2 is not None else []
+        prev_tail = [p1 + p2 for p1, p2 in zip_longest(prev1_tail, prev2_tail, fillvalue=0)]
+    else:
+        prev_tail = prev1_tail
     factor = 2 if kind == "DBL" else 1
     return [c - factor * p for c, p in zip_longest(cur_tail, prev_tail, fillvalue=0)]
 
