@@ -11,15 +11,15 @@ from simulate import muladd
 import bandwidth_dynamic
 
 
-class TestBandwidthDynamicJoinShortKeys(unittest.TestCase):
+class TestBandwidthDynamicJoinMatmuls(unittest.TestCase):
     def test_join_entries_present_when_enabled(self):
-        flag = bandwidth_dynamic.ENABLE_DP_JOIN_SHORT_KEYS
-        bandwidth_dynamic.ENABLE_DP_JOIN_SHORT_KEYS = True
+        flag = bandwidth_dynamic.ENABLE_DP_JOIN_MATMULS
+        bandwidth_dynamic.ENABLE_DP_JOIN_MATMULS = True
         try:
             bw = Bandwidth(Cache(12, muladd))
             res = bw.dynamic_times(3, 20)
         finally:
-            bandwidth_dynamic.ENABLE_DP_JOIN_SHORT_KEYS = flag
+            bandwidth_dynamic.ENABLE_DP_JOIN_MATMULS = flag
         found = False
         for v in res.values():
             if isinstance(v, list) and v and isinstance(v[0], tuple) and v[0][0] == "JOIN":
