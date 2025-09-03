@@ -342,76 +342,54 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
     m = len(tensors)
     rows, cols = tensors[0].sz[0], tensors[-1].sz[1]
     out = accumulate_output
-    # if out is None:
-    #     if isinstance(node, (Cache, Bandwidth)) and out_level is not None:
-    #         out = node.calloc(rows, cols, level=out_level)
-    #     else:
-    #         out = Tensor.zeros(rows, cols, level=0)
+    ops1, ops2 = list(tensors), list(tensors)
 
-    ops1 = list(tensors)
-    ops2 = list(tensors)
-
-    if j == 0:
-        out = node.calloc(rows, cols, level=out_level) if accumulate_output is None else accumulate_output
-        # Split rows of the first operand; write directly into row slices of `out`.
-        h = rows // 2
-        ops1[0] = tensors[0][0:h, :]
-        ops2[0] = tensors[0][h:2 * h, :]
-        # Always compute directly into the destination slices to avoid
-        # cross-level store_to complexities when src/dst share a level.
-        run_dynamic(
-            results,
-            node,
-            *ops1,
-            reset_counter=False,
-            accumulate_output=out[0:h, :],
-            out_level=out_level,
-            only_store=only_store or accumulate_output is None,
-        )
-        run_dynamic(
-            results,
-            node,
-            *ops2,
-            reset_counter=False,
-            accumulate_output=out[h:2 * h, :],
-            out_level=out_level,
-            only_store=only_store or accumulate_output is None,
-        )
-    elif j == m:
-        out = node.calloc(rows, cols, level=out_level) if accumulate_output is None else accumulate_output
-        # Split columns of the last operand; write directly into column slices of `out`.
-        h = cols // 2
-        ops1[-1] = tensors[-1][:, 0:h]
-        ops2[-1] = tensors[-1][:, h:2 * h]
-        run_dynamic(
-            results,
-            node,
-            *ops1,
-            reset_counter=False,
-            accumulate_output=out[:, 0:h],
-            out_level=out_level,
-            only_store=only_store or accumulate_output is None,
-        )
-        run_dynamic(
-            results,
-            node,
-            *ops2,
-            reset_counter=False,
-            accumulate_output=out[:, h:2 * h],
-            out_level=out_level,
-            only_store=only_store or accumulate_output is None,
-        )
+    if j in (0, m):
+        if out is None:
+            out = node.calloc(rows, cols, level=out_level)
+        h = rows // 2 if j == 0 else cols // 2
+        if j == 0:
+            ops1[0], ops2[0] = tensors[0][0:h, :], tensors[0][h:2 * h, :]
+            out_slices = (out[0:h, :], out[h:2 * h, :])
+        else:
+            ops1[-1], ops2[-1] = tensors[-1][:, 0:h], tensors[-1][:, h:2 * h]
+            out_slices = (out[:, 0:h], out[:, h:2 * h])
+        store = only_store or accumulate_output is None
+        for ops, out_slice in zip((ops1, ops2), out_slices):
+            run_dynamic(
+                results,
+                node,
+                *ops,
+                reset_counter=False,
+                accumulate_output=out_slice,
+                out_level=out_level,
+                only_store=store,
+            )
     else:
         h = tensors[j].sz[0] // 2
-        ops1[j - 1] = tensors[j - 1][:, 0:h]
-        ops1[j] = tensors[j][0:h, :]
-        ops2[j - 1] = tensors[j - 1][:, h:2 * h]
-        ops2[j] = tensors[j][h:2 * h, :]
-        if accumulate_output is None:
+        ops1[j - 1], ops1[j] = tensors[j - 1][:, 0:h], tensors[j][0:h, :]
+        ops2[j - 1], ops2[j] = tensors[j - 1][:, h:2 * h], tensors[j][h:2 * h, :]
+        if out is None:
             out = run_dynamic(results, node, *ops1, reset_counter=False, out_level=out_level, only_store=only_store)
         else:
-            run_dynamic(results, node, *ops1, reset_counter=False, accumulate_output=out, out_level=out_level, only_store=only_store)
-        run_dynamic(results, node, *ops2, reset_counter=False, accumulate_output=out, out_level=out_level, only_store=False)
+            run_dynamic(
+                results,
+                node,
+                *ops1,
+                reset_counter=False,
+                accumulate_output=out,
+                out_level=out_level,
+                only_store=only_store,
+            )
+        run_dynamic(
+            results,
+            node,
+            *ops2,
+            reset_counter=False,
+            accumulate_output=out,
+            out_level=out_level,
+            only_store=False,
+        )
 
     return out
 
