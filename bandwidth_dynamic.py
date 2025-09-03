@@ -177,6 +177,10 @@ def _dp_expand(mapping, level_here, max_cpu_time, keyinfo=None):
 
     heap = []
     for key, times in mapping.items():
+        # Skip bookkeeping entries such as "_key_index" or malformed rows
+        # that do not follow the [tag, cpu, bw...] layout.
+        if key == "_key_index" or not isinstance(times, list) or len(times) < 2:
+            continue
         cpu = times[1]
         heapq.heappush(heap, (cpu, key))
 
@@ -272,6 +276,8 @@ def dynamic_times_impl(bw, nmatmuls, max_cpu):
     if ENABLE_DP_JOIN_MATMULS:
         heap = []
         for key, times in out.items():
+            if key == "_key_index" or not isinstance(times, list) or len(times) < 2:
+                continue
             cpu = times[1]
             heapq.heappush(heap, (cpu, key))
         while heap:

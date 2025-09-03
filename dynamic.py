@@ -510,6 +510,23 @@ def previous_key(key, op=None):
                         flat.extend([shp, lvl])
                     flat.extend([new_out[0], new_out[1]])
                     return tuple(flat)
+        if kind == "JOIN":
+            # Reconstruct the first subproblem that produced this JOIN entry.
+            try:
+                n_inputs = op[1]
+            except Exception:
+                n_inputs = None
+            if isinstance(n_inputs, int) and 0 < n_inputs <= len(ops):
+                first_ops = ops[:n_inputs]
+                # Output dims: rows from first operand, cols from last operand
+                out_rows = first_ops[0][0][0]
+                out_cols = first_ops[-1][0][1]
+                out_lvl = first_ops[-1][1]
+                flat = []
+                for shp, lvl in first_ops:
+                    flat.extend([shp, lvl])
+                flat.extend([(out_rows, out_cols), out_lvl])
+                return tuple(flat)
     return None
 
 
