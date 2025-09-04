@@ -606,34 +606,41 @@ def extras(key, results):
     return [c - factor * p for c, p in zip_longest(cur_tail, prev_tail, fillvalue=0)]
 
 
-def pp(results):
-    for k, v in results.items():
-        cpu = 0
-        bw_time = 0
-        if isinstance(v, list) and v:
-            # Formats:
-            # - BinOpx: ["BinOpx", cpu]
-            # - Bandwidth: [(op,...), cpu, bw]
-            # - Back-compat: [cpu, bw]
-            if isinstance(v[0], str):
-                cpu = v[1] if len(v) > 1 else 0
-            elif isinstance(v[0], tuple):
-                cpu = v[1]
-                bw_time = v[2] if len(v) > 2 else 0
-            else:
-                cpu = v[0]
-                bw_time = v[1] if len(v) > 1 else 0
-        util = 0.0 if (cpu == 0 and bw_time == 0) else (cpu / max(cpu, bw_time))
-        extra = extras(k, results)
-        if extra is None:
-            print(f"{k}: {v} | util={util:.3f}")
+def ppkey(results, k):
+    """Pretty-print a single dynamic-programming result entry."""
+
+    v = results[k]
+    cpu = 0
+    bw_time = 0
+    if isinstance(v, list) and v:
+        # Formats:
+        # - BinOpx: ["BinOpx", cpu]
+        # - Bandwidth: [(op,...), cpu, bw]
+        # - Back-compat: [cpu, bw]
+        if isinstance(v[0], str):
+            cpu = v[1] if len(v) > 1 else 0
+        elif isinstance(v[0], tuple):
+            cpu = v[1]
+            bw_time = v[2] if len(v) > 2 else 0
         else:
-            print(f"{k}: {v} | util={util:.3f} | extras={extra}")
-        pk = previous_key(k, v[0])
-        print(f"    previous_key: {pk} = {results.get(pk)}")
-        if isinstance(v[0], tuple) and v[0] and v[0][0] == "JOIN":
-            pk2 = previous_key2(k, v[0])
-            print(f"    previous_key2: {pk2} = {results.get(pk2)}")
+            cpu = v[0]
+            bw_time = v[1] if len(v) > 1 else 0
+    util = 0.0 if (cpu == 0 and bw_time == 0) else (cpu / max(cpu, bw_time))
+    extra = extras(k, results)
+    if extra is None:
+        print(f"{k}: {v} | util={util:.3f}")
+    else:
+        print(f"{k}: {v} | util={util:.3f} | extras={extra}")
+    pk = previous_key(k, v[0])
+    print(f"    previous_key: {pk} = {results.get(pk)}")
+    if isinstance(v[0], tuple) and v[0] and v[0][0] == "JOIN":
+        pk2 = previous_key2(k, v[0])
+        print(f"    previous_key2: {pk2} = {results.get(pk2)}")
+
+
+def pp(results):
+    for k in results:
+        ppkey(results, k)
 
 
 if __name__ == "__main__":
