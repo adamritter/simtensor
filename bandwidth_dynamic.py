@@ -85,6 +85,8 @@ def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo, heap=No
     summed bandwidth times.
     """
 
+    from dynamic import extras
+
     new = [tag, new_cpu] + new_bws
 
     if new_key not in mapping:
@@ -92,6 +94,9 @@ def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo, heap=No
         keyinfo[_dp_short_key(new_key)].add(new_key)
         if heap is not None:
             heapq.heappush(heap, (new_cpu, new_key))
+        extra = extras(new_key, mapping)
+        if extra is not None and any(e < 0 for e in extra):
+            raise ValueError(f"negative extras {extra} for {new_key}")
         return
     cur = mapping[new_key]
 
@@ -102,6 +107,9 @@ def _dp_update_mapping(mapping, new_key, new_cpu, new_bws, tag, keyinfo, heap=No
         mapping[new_key] = new
         if heap is not None:
             heapq.heappush(heap, (new_cpu, new_key))
+        extra = extras(new_key, mapping)
+        if extra is not None and any(e < 0 for e in extra):
+            raise ValueError(f"negative extras {extra} for {new_key}")
 
 
 def _dp_expand_key(key, times, mapping, level_here, max_cpu_time, heap=None, keyinfo=None):
