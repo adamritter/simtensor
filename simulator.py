@@ -67,35 +67,47 @@ class Tensor:
 
         Supports 1- or 2-D slicing via `t[i]`, `t[i:j]`, `t[:, k]`, etc.
         """
-        key2=None
+        key2 = None
         if isinstance(key, tuple):
             key, key2 = key
         r = self
         if isinstance(key, slice):
-            start=key.start or 0
-            stop=key.stop
-            if stop is None:
-                stop = self.sz[0]
+            start = 0 if key.start is None else key.start
+            stop = self.sz[0] if key.stop is None else key.stop
+            if start < 0:
+                start += self.sz[0]
             if stop < 0:
-                stop = stop + self.sz[0]
-            offset = self.offset + self.skips[0]*start
-            r = Tensor(self.data, self.level, [stop-start] + self.sz[1:], offset, self.skips, self.uid)
+                stop += self.sz[0]
+            start = max(start, 0)
+            stop = min(max(stop, 0), self.sz[0])
+            offset = self.offset + self.skips[0] * start
+            r = Tensor(self.data, self.level, [stop - start] + self.sz[1:], offset, self.skips, self.uid)
         elif isinstance(key, int):
-            offset = self.offset + self.skips[0]*key
+            if key < 0:
+                key += self.sz[0]
+            if key < 0 or key >= self.sz[0]:
+                raise IndexError("Tensor index out of range")
+            offset = self.offset + self.skips[0] * key
             r = Tensor(self.data, self.level, self.sz[1:], offset, self.skips[1:], self.uid)
 
         if isinstance(key2, slice):
-            start=key2.start or 0
-            stop=key2.stop
-            if stop is None:
-                stop = r.sz[1]
+            start = 0 if key2.start is None else key2.start
+            stop = r.sz[1] if key2.stop is None else key2.stop
+            if start < 0:
+                start += r.sz[1]
             if stop < 0:
-                stop = stop + r.sz[1]
-            offset = r.offset + r.skips[1]*start
-            r = Tensor(r.data, r.level, [r.sz[0]]+[stop-start] + r.sz[2:], offset, r.skips, r.uid)
+                stop += r.sz[1]
+            start = max(start, 0)
+            stop = min(max(stop, 0), r.sz[1])
+            offset = r.offset + r.skips[1] * start
+            r = Tensor(r.data, r.level, [r.sz[0]] + [stop - start] + r.sz[2:], offset, r.skips, r.uid)
         elif isinstance(key2, int):
-            offset = r.offset + r.skips[1]*key2
-            r = Tensor(r.data, r.level, [r.sz[0]]+r.sz[2:], offset, [r.skips[0]]+ r.skips[2:], r.uid)
+            if key2 < 0:
+                key2 += r.sz[1]
+            if key2 < 0 or key2 >= r.sz[1]:
+                raise IndexError("Tensor index out of range")
+            offset = r.offset + r.skips[1] * key2
+            r = Tensor(r.data, r.level, [r.sz[0]] + r.sz[2:], offset, [r.skips[0]] + r.skips[2:], r.uid)
         return r
 
     def __setitem__(self, key, value):
