@@ -23,12 +23,12 @@ def verify_result(key, results, node):
         tensors = [node.alloc(t, allow_lower_level=True) for t in tensors]
 
     v = results.get(key)
-    print(f"Running dynamic for {key}, value {v}, extras {extras(key, results)}")
-    pk = previous_key(key, v[0])
-    print(f"    previous_key: {pk} = {results.get(pk)}")
-    if isinstance(v[0], tuple) and v[0] and v[0][0] == "JOIN":
-        pk2 = previous_key2(key, v[0])
-        print(f"    previous_key2: {pk2} = {results.get(pk2)}")
+    # print(f"Running dynamic for {key}, value {v}, extras {extras(key, results)}")
+    # pk = previous_key(key, v[0])
+    # print(f"    previous_key: {pk} = {results.get(pk)}")
+    # if isinstance(v[0], tuple) and v[0] and v[0][0] == "JOIN":
+    #     pk2 = previous_key2(key, v[0])
+    #     print(f"    previous_key2: {pk2} = {results.get(pk2)}")
     out = run_dynamic(results, node, *tensors, out_level=out_level, reset_counter=True)
     # Output shape should match trailing dims in the key
     assert out.sz == [out_dims[0], out_dims[1]]
@@ -73,7 +73,7 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth():
     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
     bw = Bandwidth(Cache(12, simulate.muladd))
     results = bw.dynamic_times(3, 30)
-    pp(results)
+    #pp(results)
     #assert len(results) == 2549
 
     verify_results(results, bw)
@@ -84,7 +84,7 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three_cache():
     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
     bw2 = Cache(100000, Bandwidth(Cache(16, simulate.muladd)))
     results = bw2.dynamic_times(3, 30)
-    pp(results)
+    #pp(results)
     verify_results(results, bw2)
 
 
@@ -92,5 +92,5 @@ def test_run_dynamic_for_all_muladd_dynamic_times_three_bandwidth2():
     # Enumerate all 2- and 3-matrix chains up to limit 8 and run them
     bw2 = Bandwidth(Cache(100000, Bandwidth(Cache(16, simulate.muladd))))
     results = bw2.dynamic_times(3, 30)
-    pp(results)
+    #pp(results)
     verify_results(results, bw2)

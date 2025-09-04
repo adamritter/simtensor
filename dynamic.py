@@ -195,7 +195,8 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
     if accumulate_output is not None and not only_store:
         _account_accumulate_load(node, counters, accumulate_output)
     if counters != entry[1:]:
-            raise AssertionError("Old: Counters mismatch: {} != {}, key: {}, entry: {}".format(counters, entry[1:], key, entry))
+            ppkey(results, key)
+            raise AssertionError("Old: Counters mismatch: {} != {}, key: {}, entry: {}, has_accumulate_output: {}, only_store: {}".format(counters, entry[1:], key, entry, accumulate_output is not None, only_store))
                 
     # When accumulating into a caller-provided output buffer, loads/stores can
     # be orchestrated at a surrounding LDST level, so bandwidth deltas observed
@@ -478,10 +479,7 @@ def previous_key(key, op=None):
             return tuple(kl)
         if kind == "DBL":
             # Reverse the doubling using the tag position
-            try:
-                tag = op[1]
-            except Exception:
-                tag = None
+            tag = op[1]
             if isinstance(tag, int):
                 new_ops = list(ops)
                 (odims, olvl) = outp
@@ -512,12 +510,8 @@ def previous_key(key, op=None):
                     return tuple(flat)
         if kind == "JOIN":
             # Reconstruct the first subproblem that produced this JOIN entry.
-            try:
-                n_inputs = op[1]
-                interm_lvl = op[2]
-            except Exception:
-                n_inputs = None
-                interm_lvl = None
+            n_inputs = op[1]
+            interm_lvl = op[2]
             if isinstance(n_inputs, int) and 0 < n_inputs <= len(ops):
                 first_ops = ops[:n_inputs]
                 # Output dims: rows from first operand, cols from last operand
@@ -545,12 +539,8 @@ def previous_key2(key, op=None):
     outp = pairs[-1]
 
     if isinstance(op, tuple) and op and op[0] == "JOIN":
-        try:
-            n_inputs = op[1]
-            interm_lvl = op[2]
-        except Exception:
-            n_inputs = None
-            interm_lvl = None
+        n_inputs = op[1]
+        interm_lvl = op[2]
         if isinstance(n_inputs, int) and 0 < n_inputs < len(ops):
             left_ops = ops[:n_inputs]
             right_ops = ops[n_inputs:]
