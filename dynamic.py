@@ -177,7 +177,18 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
     elif entry[0][0] == "LDST":
         out = _run_dynamic_ldst(node, tensors, accumulate_output, entry[0][1:], out_level=out_level, key=key, results=results, only_store=only_store)
     elif entry[0][0] == "JOIN":
-        out = _run_dynamic_join(node, tensors, accumulate_output, entry[0][1], out_level=out_level, key=key, results=results, only_store=only_store)
+        interm_lvl = entry[0][2] if len(entry[0]) > 2 else getattr(tensors[entry[0][1] - 1], "level", 0)
+        out = _run_dynamic_join(
+            node,
+            tensors,
+            accumulate_output,
+            entry[0][1],
+            interm_lvl,
+            out_level=out_level,
+            key=key,
+            results=results,
+            only_store=only_store,
+        )
     elif entry[0][0] == "DBL":
         out = _run_dynamic_dbl(node, tensors, accumulate_output, entry[0][1], out_level=out_level, key=key, results=results, only_store=only_store)
     else:
@@ -398,13 +409,24 @@ def _run_dynamic_dbl(node, tensors, accumulate_output, j, out_level=None, key=No
     return out
 
 
-def _run_dynamic_join(node, tensors, accumulate_output, n_inputs, out_level=None, key=None, results=None, only_store=False):
+def _run_dynamic_join(
+    node,
+    tensors,
+    accumulate_output,
+    n_inputs,
+    interm_level,
+    out_level=None,
+    key=None,
+    results=None,
+    only_store=False,
+):
     """Execute a JOIN step by concatenating two matmul chains.
 
-    ``n_inputs`` specifies how many operands belong to the first chain. We
-    first run that subproblem without an explicit output. The resulting
-    intermediate matrix is then used as the leading operand of the second
-    chain, which runs with ``accumulate_output`` if provided.
+    ``n_inputs`` specifies how many operands belong to the first chain and
+    ``interm_level`` gives the cache level for the intermediate result. The
+    first subproblem runs without an explicit output buffer and its result is
+    then used as the leading operand of the second chain, which runs with
+    ``accumulate_output`` if provided.
     """
 
     if n_inputs < 1 or n_inputs >= len(tensors):
@@ -412,7 +434,6 @@ def _run_dynamic_join(node, tensors, accumulate_output, n_inputs, out_level=None
 
     # First subchain: compute the left part to obtain the intermediate result.
     ops1 = list(tensors[:n_inputs])
-    interm_level = getattr(tensors[n_inputs - 1], "level", 0)
     interm = run_dynamic(
         results,
         node,
