@@ -185,11 +185,7 @@ def run_dynamic(results, node, *tensors, out_level=None, reset_counter=True, acc
 
     counters = get_counters(node)
     # decrement counters by orig_counter
-    while len(counters) < len(orig_counter):
-        counters.append(0)
-    while len(orig_counter) < len(counters):
-        orig_counter.append(0)
-    counters = [counters[i] - orig_counter[i] for i in range(len(counters))]
+    counters = [c - o for c, o in zip_longest(counters, orig_counter, fillvalue=0)]
     while len(counters) > len(entry[1:]) and counters[-1] == 0:
         counters.pop()
     if accumulate_output is not None and not only_store:
